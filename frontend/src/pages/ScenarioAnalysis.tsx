@@ -11,6 +11,7 @@ import {
   DEMO_SCENARIO_PRESETS,
   runScenario,
 } from '../data/idukki-seed'
+import { api } from '../api/client'
 import type { ScenarioParams, ScenarioResult } from '../types'
 import clsx from 'clsx'
 import {
