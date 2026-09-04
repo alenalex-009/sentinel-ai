@@ -1,7 +1,9 @@
 import { useLocation } from 'react-router-dom'
-import { Shield, Bell } from 'lucide-react'
+import { Shield, Bell, Wifi, WifiOff } from 'lucide-react'
 import { FreshnessBadge } from '../ui/FreshnessBadge'
 import { DemoModeBanner } from '../ui/DemoModeBanner'
+import { useApiWithFallback } from '../../hooks/useApiWithFallback'
+import { api } from '../../api/client'
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Command Overview — Idukki, Kerala',
@@ -12,6 +14,29 @@ const PAGE_TITLES: Record<string, string> = {
   '/scenarios': 'Scenario Analysis',
   '/reports': 'Reports',
   '/data': 'Data & Sources',
+}
+
+function SystemStatus() {
+  const { data, source } = useApiWithFallback<{ status: string; database: string }>(
+    () => api.health(),
+    { status: 'unknown', database: 'unknown' },
+  )
+
+  const apiOk = source === 'api' && data?.status === 'ok'
+  const dbOk = apiOk && data?.database === 'ok'
+
+  return (
+    <div className="flex items-center gap-2" title={`API: ${source} | DB: ${data?.database ?? 'unknown'}`}>
+      {apiOk ? (
+        <Wifi className="h-3.5 w-3.5 text-green-500" />
+      ) : (
+        <WifiOff className="h-3.5 w-3.5 text-amber-500" />
+      )}
+      <span className="text-2xs text-slate-600">
+        {apiOk ? (dbOk ? 'API+DB' : 'API only') : 'DEMO'}
+      </span>
+    </div>
+  )
 }
 
 export function TopBar() {
@@ -27,6 +52,7 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-3">
+        <SystemStatus />
         <DemoModeBanner />
         <FreshnessBadge status="DEMO" ageHours={3} />
         <button className="relative flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-800 hover:text-slate-300">
