@@ -10,12 +10,13 @@ import { RiskBadge } from '../components/ui/RiskBadge'
 import { PriorityBadge } from '../components/ui/PriorityBadge'
 import { DataTypeBadge } from '../components/ui/DataTypeBadge'
 import { FreshnessBadge } from '../components/ui/FreshnessBadge'
+import { ApiStatusBanner } from '../components/ui/ApiStatusBanner'
+import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import { DEMO_DISTRICT_OVERVIEW, DEMO_HABITATIONS } from '../data/idukki-seed'
-import type { HabitationListItem } from '../types'
+import { useApiWithFallback } from '../hooks/useApiWithFallback'
+import { api } from '../api/client'
+import type { DistrictOverview, HabitationListItem } from '../types'
 import clsx from 'clsx'
-
-const overview = DEMO_DISTRICT_OVERVIEW
-const d = overview.district
 
 const HAZARD_ICONS: Record<string, React.ReactNode> = {
   rainfall: <Droplets className="h-3.5 w-3.5" />,
