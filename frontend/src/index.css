@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Print styles for Reports page */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12px;
+  }
+
+  nav, header, .no-print {
+    display: none !important;
+  }
+
+  .print-full {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  .rounded, .rounded-lg {
+    border-radius: 4px !important;
+  }
+
+  /* Ensure borders print */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
 @layer base {
   * {
     box-sizing: border-box;
