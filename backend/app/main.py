@@ -3,13 +3,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import district, habitations, risk, relocation, scenarios, data_status
+from app.api.v1 import district, habitations, risk, relocation, scenarios, data_status, validation
 from app.core.config import settings
 
 app = FastAPI(
     title="Sentinel AI API",
     description="GIS-first disaster decision-support platform — SIH PS 26191",
-    version="0.3.0",
+    version="0.4.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -28,6 +28,7 @@ app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
 app.include_router(relocation.router, prefix="/api/v1/relocation", tags=["Relocation"])
 app.include_router(scenarios.router, prefix="/api/v1/scenarios", tags=["Scenarios"])
 app.include_router(data_status.router, prefix="/api/v1/data-sources", tags=["Data Sources"])
+app.include_router(validation.router, prefix="/api/v1/validate", tags=["Validation"])
 
 
 @app.get("/health")
@@ -37,9 +38,10 @@ async def health_check():
     return {
         "status": "ok",
         "service": "Sentinel AI API",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "demo_mode": settings.DEMO_MODE,
         "database": db["status"],
+        "database_message": db["message"],
     }
 
 
@@ -47,7 +49,8 @@ async def health_check():
 async def root():
     return {
         "message": "Sentinel AI — GIS Disaster Decision Support Platform",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "docs": "/docs",
         "health": "/health",
+        "validate": "/api/v1/validate/all",
     }
