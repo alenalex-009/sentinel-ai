@@ -1,4 +1,4 @@
--- Sentinel AI — PostGIS Schema
+-- Sentinel AI — PostGIS Schema v2 (Phase 3)
 -- SIH PS 26191 | Pilot: Idukki, Kerala
 
 CREATE EXTENSION IF NOT EXISTS postgis;
@@ -35,9 +35,9 @@ CREATE TABLE IF NOT EXISTS habitations (
 CREATE TABLE IF NOT EXISTS hazard_assessments (
     id SERIAL PRIMARY KEY,
     habitation_id VARCHAR(64) REFERENCES habitations(id),
-    hazard_type VARCHAR(64) NOT NULL,  -- LANDSLIDE, FLOOD, CLOUDBURST, EROSION
-    intensity FLOAT NOT NULL,           -- 0-100
-    data_type VARCHAR(32) NOT NULL,     -- OBSERVED, DERIVED, ESTIMATED
+    hazard_type VARCHAR(64) NOT NULL,
+    intensity FLOAT NOT NULL CHECK (intensity >= 0 AND intensity <= 100),
+    data_type VARCHAR(32) NOT NULL,
     source TEXT,
     description TEXT,
     assessed_at TIMESTAMPTZ DEFAULT NOW(),
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS hazard_assessments (
 CREATE TABLE IF NOT EXISTS risk_scores (
     id SERIAL PRIMARY KEY,
     habitation_id VARCHAR(64) REFERENCES habitations(id),
-    current_score FLOAT NOT NULL,
-    baseline_score FLOAT NOT NULL,
+    current_score FLOAT NOT NULL CHECK (current_score >= 0 AND current_score <= 100),
+    baseline_score FLOAT NOT NULL CHECK (baseline_score >= 0 AND baseline_score <= 100),
     hazard_component FLOAT,
     exposure_component FLOAT,
     vulnerability_component FLOAT,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS risk_scores (
 CREATE TABLE IF NOT EXISTS vulnerability_assessments (
     id SERIAL PRIMARY KEY,
     habitation_id VARCHAR(64) REFERENCES habitations(id),
-    overall_score FLOAT NOT NULL,
+    overall_score FLOAT NOT NULL CHECK (overall_score >= 0 AND overall_score <= 100),
     demographic_score FLOAT,
     socioeconomic_score FLOAT,
     infrastructure_score FLOAT,
@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS vulnerability_assessments (
 CREATE TABLE IF NOT EXISTS relocation_priorities (
     id SERIAL PRIMARY KEY,
     habitation_id VARCHAR(64) REFERENCES habitations(id),
-    priority VARCHAR(32) NOT NULL,  -- IMMEDIATE, SHORT-TERM, MEDIUM-TERM
-    rpi_score FLOAT NOT NULL,
+    priority VARCHAR(32) NOT NULL,
+    rpi_score FLOAT NOT NULL CHECK (rpi_score >= 0 AND rpi_score <= 100),
     risk_component FLOAT,
     vulnerability_component FLOAT,
     exposed_population_component FLOAT,
@@ -96,14 +96,15 @@ CREATE TABLE IF NOT EXISTS candidate_sites (
     district_id VARCHAR(64) REFERENCES districts(id),
     geom GEOMETRY(POINT, 4326),
     boundary GEOMETRY(POLYGON, 4326),
-    suitability_score FLOAT,
-    safe_capacity INTEGER,
+    suitability_score FLOAT CHECK (suitability_score >= 0 AND suitability_score <= 100),
+    safe_capacity INTEGER CHECK (safe_capacity >= 0),
     safety_score FLOAT,
     infrastructure_score FLOAT,
     accessibility_score FLOAT,
     water_score FLOAT,
     healthcare_score FLOAT,
     education_score FLOAT,
+    hard_constraints_passed BOOLEAN DEFAULT TRUE,
     data_type VARCHAR(32) DEFAULT 'DERIVED',
     data_status VARCHAR(32) DEFAULT 'DEMO',
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -119,11 +120,26 @@ CREATE TABLE IF NOT EXISTS capacity_assessments (
     education_capacity INTEGER,
     infrastructure_capacity INTEGER,
     environment_capacity INTEGER,
-    c_safe INTEGER,  -- min of all dimensions
+    c_safe INTEGER,
     bottleneck VARCHAR(64),
     data_type VARCHAR(32) DEFAULT 'DERIVED',
     assessed_at TIMESTAMPTZ DEFAULT NOW(),
     data_status VARCHAR(32) DEFAULT 'DEMO'
+);
+
+-- Optimization results (stored for audit trail)
+CREATE TABLE IF NOT EXISTS optimization_results (
+    id SERIAL PRIMARY KEY,
+    habitation_id VARCHAR(64) REFERENCES habitations(id),
+    status VARCHAR(32) NOT NULL,
+    total_demand INTEGER,
+    total_allocated INTEGER,
+    unallocated INTEGER,
+    objective_value FLOAT,
+    solver_note TEXT,
+    data_type VARCHAR(32) DEFAULT 'RECOMMENDATION',
+    data_status VARCHAR(32) DEFAULT 'DEMO',
+    computed_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Spatial indexes
@@ -132,3 +148,5 @@ CREATE INDEX IF NOT EXISTS idx_habitations_district ON habitations(district_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_sites_geom ON candidate_sites USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_risk_scores_habitation ON risk_scores(habitation_id);
 CREATE INDEX IF NOT EXISTS idx_hazard_assessments_habitation ON hazard_assessments(habitation_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_habitation ON vulnerability_assessments(habitation_id);
+CREATE INDEX IF NOT EXISTS idx_rp_habitation ON relocation_priorities(habitation_id);
