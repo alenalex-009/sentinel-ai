@@ -110,15 +110,35 @@ export function ScenarioAnalysis() {
   const [params, setParams] = useState<ScenarioParams>(DEMO_SCENARIO_PRESETS[0])
   const [result, setResult] = useState<ScenarioResult>(() => runScenario(DEMO_SCENARIO_PRESETS[0]))
 
-  function update(patch: Partial<ScenarioParams>) {
-    const next = { ...params, ...patch }
+  async function runAndSet(next: ScenarioParams) {
     setParams(next)
+    try {
+      const apiResult = await api.runScenario({
+        habitation_id: next.habitation_id,
+        label: next.label,
+        rainfall_multiplier: next.rainfall_multiplier,
+        population_change_pct: next.population_change_pct,
+        capacity_reduction_pct: next.capacity_reduction_pct,
+        road_disruption: next.road_disruption,
+      }) as ScenarioResult
+      // API returns SIMULATED — use it directly
+      if (apiResult?.data_type === 'SIMULATED') {
+        setResult(apiResult)
+        return
+      }
+    } catch {
+      // API unavailable — fall back to frontend engine (also SIMULATED)
+    }
     setResult(runScenario(next))
   }
 
+  function update(patch: Partial<ScenarioParams>) {
+    const next = { ...params, ...patch }
+    runAndSet(next)
+  }
+
   function applyPreset(preset: ScenarioParams) {
-    setParams(preset)
-    setResult(runScenario(preset))
+    runAndSet(preset)
   }
 
   const comparisonData = [
