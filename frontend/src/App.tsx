@@ -8,8 +8,8 @@ import { DecisionIntelligence } from './pages/DecisionIntelligence'
 import { Priorities } from './pages/Priorities'
 import { RelocationIntelligence } from './pages/RelocationIntelligence'
 import { ScenarioAnalysis } from './pages/ScenarioAnalysis'
+import { Reports } from './pages/Reports'
 import { DataSources } from './pages/DataSources'
-import { Placeholder } from './pages/Placeholder'
 
 export default function App() {
   return (
@@ -30,25 +30,17 @@ export default function App() {
         {/* Screen 10 — Decision Intelligence */}
         <Route path="/habitations/:id/decision" element={<DecisionIntelligence />} />
 
-        {/* Risk & Priorities — district-wide RPI ranking */}
+        {/* Risk & Priorities */}
         <Route path="/priorities" element={<Priorities />} />
 
-        {/* Relocation Intelligence — sites, suitability, capacity, allocation */}
+        {/* Relocation Intelligence */}
         <Route path="/relocation" element={<RelocationIntelligence />} />
 
         {/* Scenario Analysis */}
         <Route path="/scenarios" element={<ScenarioAnalysis />} />
 
-        {/* Reports (Phase 3) */}
-        <Route
-          path="/reports"
-          element={
-            <Placeholder
-              title="Reports"
-              description="District, habitation, risk, evidence, candidate sites, capacity, relocation and scenario reports. Scheduled for Phase 3."
-            />
-          }
-        />
+        {/* Reports — Phase 3 */}
+        <Route path="/reports" element={<Reports />} />
 
         {/* Data & Sources */}
         <Route path="/data" element={<DataSources />} />
