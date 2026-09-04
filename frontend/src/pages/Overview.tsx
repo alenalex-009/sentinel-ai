@@ -152,6 +152,13 @@ export function Overview() {
   const [selectedId, setSelectedId] = useState<string | null>('munnar-central')
   const [showHazard, setShowHazard] = useState(false)
 
+  const { data: liveOverview, error: apiError, source: apiSource } = useApiWithFallback<DistrictOverview>(
+    () => api.getDistrictOverview('idukki') as Promise<DistrictOverview>,
+    DEMO_DISTRICT_OVERVIEW,
+  )
+  const overview = liveOverview ?? DEMO_DISTRICT_OVERVIEW
+  const d = overview.district
+
   const handleSelect = (id: string) => {
     setSelectedId(id)
   }
