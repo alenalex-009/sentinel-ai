@@ -1,10 +1,16 @@
 // Sentinel AI — Core TypeScript types
+// Phase 2: extended for full pipeline
 
 export type DataType = 'OBSERVED' | 'DERIVED' | 'ESTIMATED' | 'SIMULATED' | 'RECOMMENDATION'
 export type DataStatus = 'LIVE' | 'DEMO' | 'SIMULATION' | 'UNAVAILABLE' | 'STALE'
 export type Priority = 'IMMEDIATE' | 'SHORT-TERM' | 'MEDIUM-TERM' | 'MONITOR' | 'NONE'
 export type HazardType = 'LANDSLIDE' | 'FLOOD' | 'CLOUDBURST' | 'EROSION' | 'MULTI_HAZARD'
 export type VulnerabilityLevel = 'VERY HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY LOW'
+export type RedZoneStatus =
+  | 'RED_ZONE_CANDIDATE'   // system-derived, not official
+  | 'UNDER_ASSESSMENT'     // formal process initiated
+  | 'NOT_RECOMMENDED'      // system does not flag
+  | 'DATA_INSUFFICIENT'    // cannot determine
 
 export interface HazardInfo {
   type: HazardType
@@ -91,6 +97,7 @@ export interface HabitationDetail {
   evidence_chain: EvidenceItem[]
   permanent_settlement_suitable: boolean
   permanent_suitability_note: string
+  red_zone_status: RedZoneStatus
   system_recommendation: string
   historical_context: {
     events: Array<{ year: number; type: string; impact: string }>
@@ -148,12 +155,15 @@ export interface DistrictOverview {
   }>
 }
 
+// ─── Candidate Sites & Capacity ───────────────────────────────────────────────
+
 export interface CandidateSite {
   id: string
   name: string
   distance_km: number
-  suitability_score: number
-  safe_capacity: number
+  suitability_score: number       // 0-100, DERIVED
+  safe_capacity: number           // C_safe = min(all dimensions)
+  bottleneck_dimension: string    // which dimension limits capacity
   safety_score: number
   infrastructure_score: number
   accessibility_score: number
@@ -162,17 +172,101 @@ export interface CandidateSite {
   education_score: number
   latitude: number
   longitude: number
+  hard_constraints_passed: boolean
   data_type: DataType
+  data_status: DataStatus
+  notes: string
+}
+
+export interface CapacityDimension {
+  name: string
+  capacity: number
+  source: string
+  data_type: DataType
+  notes: string
 }
 
 export interface CapacityAssessment {
   site_id: string
-  c_safe: number
+  site_name: string
+  c_safe: number                  // min of all dimensions
   bottleneck: string
-  dimensions: Record<string, number>
+  dimensions: CapacityDimension[]
   required_population: number
-  surplus_deficit: number
+  surplus_deficit: number         // c_safe - required_population
+  can_absorb_alone: boolean
   data_type: DataType
+  data_status: DataStatus
+}
+
+// ─── Relocation Pipeline ──────────────────────────────────────────────────────
+
+export interface RelocationDemand {
+  habitation_id: string
+  habitation_name: string
+  total_population: number
+  households: number
+  relocation_demand: number       // population requiring relocation
+  demand_basis: string            // explanation of how demand was derived
+  data_type: DataType
+}
+
+export interface AllocationEntry {
+  site_id: string
+  site_name: string
+  allocated_population: number
+  distance_km: number
+  utilization_pct: number         // allocated / c_safe
+  surplus_after: number
+}
+
+export interface OptimizationResult {
+  habitation_id: string
+  status: 'FEASIBLE' | 'INFEASIBLE' | 'PARTIAL'
+  total_demand: number
+  total_allocated: number
+  unallocated: number
+  allocations: AllocationEntry[]
+  objective_value: number         // minimized cost/distance
+  constraints_applied: string[]
+  data_type: DataType             // always RECOMMENDATION
+  data_status: DataStatus         // always DEMO or SIMULATION
+  solver_note: string
+}
+
+// ─── Scenarios ────────────────────────────────────────────────────────────────
+
+export interface ScenarioParams {
+  habitation_id: string
+  label: string
+  rainfall_multiplier: number     // 1.0 = baseline
+  population_change_pct: number   // 0 = no change
+  capacity_reduction_pct: number  // 0 = no reduction
+  road_disruption: boolean
+}
+
+export interface ScenarioResult {
+  params: ScenarioParams
+  simulated_risk: number
+  simulated_priority: Priority
+  simulated_demand: number
+  simulated_capacity_available: number
+  simulated_gap: number
+  impact_summary: string
+  data_type: 'SIMULATED'
+  data_status: 'SIMULATION'
+  warning: string
+}
+
+// ─── Risk Intelligence (Screen 08) ────────────────────────────────────────────
+
+export interface RiskIntelligencePanel {
+  mode: 'current' | 'baseline' | 'change'
+  district_id: string
+  risk_distribution: { critical: number; high: number; medium: number; low: number }
+  top_drivers: Array<{ driver: string; contribution: number; data_type: DataType }>
+  significant_shifts: Array<{ habitation: string; change: number; direction: 'increase' | 'decrease' }>
+  human_impact: { total_at_risk: number; immediate_action: number; data_type: DataType }
   data_status: DataStatus
 }
 
