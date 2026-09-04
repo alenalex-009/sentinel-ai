@@ -1,16 +1,42 @@
 // Sentinel AI — API client
+// All calls throw on non-2xx so useApiWithFallback can catch and use demo data.
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`)
-  if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${path}`)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 8000) // 8s timeout
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, { signal: controller.signal })
+    if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+    return res.json() as Promise<T>
+  } finally {
+    clearTimeout(timeout)
   }
-  return res.json() as Promise<T>
+}
+
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+    return res.json() as Promise<T>
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export const api = {
+  // Health
+  health: () => fetchJSON<{ status: string; database: string }>('/health'),
+  dataSourceHealth: () => fetchJSON('/api/v1/data-sources/health'),
+
   // Districts
   getDistrictOverview: (districtId: string) =>
     fetchJSON(`/api/v1/districts/${districtId}/overview`),
@@ -38,6 +64,9 @@ export const api = {
   getDecisionTrace: (habitationId: string) =>
     fetchJSON(`/api/v1/risk/decision-trace/${habitationId}`),
 
+  getRiskPriorities: (districtId = 'idukki') =>
+    fetchJSON(`/api/v1/risk/priorities?district_id=${districtId}`),
+
   // Relocation
   getCandidateSites: (habitationId: string) =>
     fetchJSON(`/api/v1/relocation/candidates?habitation_id=${habitationId}`),
@@ -45,11 +74,19 @@ export const api = {
   getCapacityAssessment: (siteId: string) =>
     fetchJSON(`/api/v1/relocation/capacity/${siteId}`),
 
+  getRelocationDemand: (habitationId: string) =>
+    fetchJSON(`/api/v1/relocation/demand/${habitationId}`),
+
+  getOptimization: (habitationId: string) =>
+    fetchJSON(`/api/v1/relocation/optimization/${habitationId}`),
+
   // Scenarios
   runScenario: (params: Record<string, unknown>) =>
-    fetch(`${BASE_URL}/api/v1/scenarios/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    }).then(r => r.json()),
+    postJSON('/api/v1/scenarios/run', params),
+
+  // Validation (audit trail)
+  validateAll: () => fetchJSON('/api/v1/validate/all'),
+
+  // Data sources
+  getDataSources: () => fetchJSON('/api/v1/data-sources/'),
 }
