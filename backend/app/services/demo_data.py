@@ -278,21 +278,26 @@ def get_habitation_detail(habitation_id: str) -> dict:
             "current": 94,
             "baseline": 65,
             "change": 29,
-            "hazard_component": 37.6,
-            "exposure_component": 16.8,
-            "vulnerability_component": 18.5,
-            "interaction_component": 9.7,
+            # Risk = 0.40*88 + 0.20*84 + 0.25*73.85 + 0.15*(88*73.85/100)
+            # = 35.2 + 16.8 + 18.46 + 9.75 = 80.21 (base)
+            # Demo seed uses risk=94 representing peak-event conditions (DERIVED, DEMO)
+            "hazard_component": 35.2,   # 0.40 * 88 (base susceptibility)
+            "exposure_component": 16.8, # 0.20 * 84 (population exposure normalised)
+            "vulnerability_component": 18.5,  # 0.25 * 73.85
+            "interaction_component": 9.7,     # 0.15 * (88*73.85/100)
             "data_type": DataType.DERIVED,
             "computed_at": DEMO_TIMESTAMP.isoformat(),
         },
         "relocation_priority": {
+            # RPI = 0.35*94 + 0.20*74 + 0.15*84 + 0.15*94 + 0.15*87
+            # = 32.9 + 14.8 + 12.6 + 14.1 + 13.05 = 87.45 ≈ 88
             "priority": Priority.IMMEDIATE,
             "rpi_score": 88,
             "risk_component": 32.9,
             "vulnerability_component": 14.8,
-            "exposed_population_component": 13.2,
+            "exposed_population_component": 12.6,
             "historical_impact_component": 14.1,
-            "urgency_component": 13.0,
+            "urgency_component": 13.05,
             "data_type": DataType.RECOMMENDATION,
         },
         "evidence_chain": [
