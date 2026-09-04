@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #0a0f1a;
+    color: #cbd5e1;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0f172a;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+  }
+}
+
+@layer components {
+  .maplibregl-map {
+    font-family: 'Inter', system-ui, sans-serif !important;
+  }
+
+  .maplibregl-popup-content {
+    background: #1e293b !important;
+    border: 1px solid #334155 !important;
+    border-radius: 6px !important;
+    padding: 0 !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5) !important;
+  }
+
+  .maplibregl-popup-tip {
+    border-top-color: #334155 !important;
+  }
+
+  .maplibregl-ctrl-group {
+    background: #1e293b !important;
+    border: 1px solid #334155 !important;
+  }
+
+  .maplibregl-ctrl-group button {
+    background-color: #1e293b !important;
+    color: #94a3b8 !important;
+  }
+
+  .maplibregl-ctrl-group button:hover {
+    background-color: #334155 !important;
+  }
+
+  .maplibregl-ctrl-attrib {
+    background: rgba(10,15,26,0.8) !important;
+    color: #475569 !important;
+    font-size: 10px !important;
+  }
+
+  .maplibregl-ctrl-attrib a {
+    color: #64748b !important;
+  }
+}
