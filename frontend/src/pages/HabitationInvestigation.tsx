@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, AlertTriangle, Users, Home,
+  ArrowLeft, Users, Home,
   ChevronRight, Info, History, Shield,
 } from 'lucide-react'
 import { RiskBadge } from '../components/ui/RiskBadge'

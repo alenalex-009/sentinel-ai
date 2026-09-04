@@ -1,10 +1,6 @@
-import { ExternalLink, Database, AlertTriangle, RefreshCw } from 'lucide-react'
+import { ExternalLink, Database, AlertTriangle } from 'lucide-react'
 import { DataTypeBadge } from '../components/ui/DataTypeBadge'
 import { FreshnessBadge } from '../components/ui/FreshnessBadge'
-import { LoadingSpinner } from '../components/ui/LoadingSpinner'
-import { ApiStatusBanner } from '../components/ui/ApiStatusBanner'
-import { useApiWithFallback } from '../hooks/useApiWithFallback'
-import { api } from '../api/client'
 import clsx from 'clsx'
 
 interface DatasetEntry {
