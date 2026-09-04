@@ -15,12 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 async def _safe_query(session: AsyncSession, query: str, params: dict = None):
-    """Execute a query, returning None on failure."""
+    """Execute a query, returning None on any failure.
+
+    Never raises — callers must check for None and use demo fallback.
+    Never silently substitutes zeros or fabricated values.
+    """
     try:
         result = await session.execute(text(query), params or {})
         return result
     except Exception as exc:
-        logger.warning(f"DB query failed: {exc}")
+        logger.warning(f"[DB] Query failed — will use demo fallback: {type(exc).__name__}: {exc}")
         return None
 
 
