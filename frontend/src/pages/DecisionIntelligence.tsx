@@ -121,17 +121,21 @@ export function DecisionIntelligence() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'Hazard (40%)', value: h.risk.hazard_component },
-              { label: 'Exposure (20%)', value: h.risk.exposure_component },
-              { label: 'Vulnerability (25%)', value: h.risk.vulnerability_component },
-              { label: 'Interaction (15%)', value: h.risk.interaction_component },
-            ].map(({ label, value }) => (
+              { label: 'Hazard (40%)', value: h.risk.hazard_component, note: '0.40 × 88' },
+              { label: 'Exposure (20%)', value: h.risk.exposure_component, note: '0.20 × 84' },
+              { label: 'Vulnerability (25%)', value: h.risk.vulnerability_component, note: '0.25 × 73.85' },
+              { label: 'Interaction (15%)', value: h.risk.interaction_component, note: '0.15 × (H×V)' },
+            ].map(({ label, value, note }) => (
               <div key={label} className="rounded border border-slate-800 bg-slate-950 p-2">
                 <div className="text-2xs text-slate-500">{label}</div>
                 <div className="text-sm font-bold font-mono text-slate-200">{value}</div>
+                <div className="text-2xs text-slate-600 font-mono">{note}</div>
               </div>
             ))}
           </div>
+          <p className="text-2xs text-slate-600 mt-1">
+            Weights are configurable baselines — not official government formulas.
+          </p>
         </div>
 
         {/* System recommendation */}
