@@ -22,6 +22,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Run model validation on startup (logs discrepancies, never blocks)
+@app.on_event("startup")
+async def startup_validation():
+    import logging
+    from app.services.risk_validation import (
+        validate_munnar_central, validate_site_a_capacity, validate_suitability_site_a
+    )
+    log = logging.getLogger("sentinel.startup")
+    log.info("[Startup] Running model validation audit...")
+    try:
+        r = validate_munnar_central()
+        log.info(f"[Startup] Risk validation: vuln={r['computed']['vulnerability']}, risk={r['computed']['risk']}, rpi={r['computed']['rpi']}")
+        c = validate_site_a_capacity()
+        log.info(f"[Startup] Capacity validation: c_safe={c['c_safe']}, bottleneck={c['bottleneck']}, gap={c['surplus_deficit']}")
+        s = validate_suitability_site_a()
+        log.info(f"[Startup] Suitability validation: computed={s['computed_suitability']}, seed={s['seed_suitability']}, match={s['match']}")
+        log.info("[Startup] Model validation complete.")
+    except Exception as exc:
+        log.error(f"[Startup] Model validation failed: {exc}")
+
+
 app.include_router(district.router, prefix="/api/v1/districts", tags=["Districts"])
 app.include_router(habitations.router, prefix="/api/v1/habitations", tags=["Habitations"])
 app.include_router(risk.router, prefix="/api/v1/risk", tags=["Risk"])
