@@ -355,7 +355,7 @@ function ProvenanceSection() {
   const sources = [
     { name: 'KSDMA Landslide Susceptibility', type: 'OBSERVED' as const, year: '2019', status: 'DEMO' },
     { name: 'IMD Rainfall (Munnar Station)', type: 'OBSERVED' as const, year: '2024-08-15 snapshot', status: 'DEMO' },
-    { name: 'Bhuvan LULC / Flood Hazard WMS', type: 'OBSERVED' as const, year: '2021-23', status: 'DEMO' },
+    { name: 'Bhuvan LULC / Kerala disaster-event WMS (historical)', type: 'OBSERVED' as const, year: '2019/2021 events', status: 'DEMO' },
     { name: 'Census of India 2011 (projected)', type: 'ESTIMATED' as const, year: '2011', status: 'DEMO' },
     { name: 'CWC River Level (Periyar)', type: 'OBSERVED' as const, year: '2024-08-15 snapshot', status: 'DEMO' },
     { name: 'data.gov.in Health Facilities', type: 'ESTIMATED' as const, year: '2022', status: 'DEMO' },

@@ -63,39 +63,136 @@ function EvidenceStep({ item }: { item: HabitationDetail['evidence_chain'][0] })
   )
 }
 
-// Build a minimal HabitationDetail from a list item for non-Munnar habitations
+// ─── Canonical derived values for non-Munnar demo habitations — parity with
+// backend demo_data (RPI/vulnerability maps and per-habitation components).
+const FALLBACK_RPI: Record<string, number> = {
+  'rajakkad': 78, 'kanthalloor': 61, 'marayoor': 52, 'adimali': 38,
+}
+const FALLBACK_VULNERABILITY: Record<string, number> = {
+  'rajakkad': 68, 'kanthalloor': 59, 'marayoor': 51, 'adimali': 42,
+}
+const FALLBACK_HISTORICAL: Record<string, number> = {
+  'rajakkad': 71, 'kanthalloor': 55, 'marayoor': 48, 'adimali': 31,
+}
+const FALLBACK_URGENCY: Record<string, number> = {
+  'rajakkad': 76, 'kanthalloor': 63, 'marayoor': 54, 'adimali': 35,
+}
+const FALLBACK_RISK_COMPONENTS: Record<string, [number, number, number, number]> = {
+  'rajakkad': [31.2, 14.4, 16.8, 8.1],
+  'kanthalloor': [27.4, 13.2, 15.6, 7.2],
+  'marayoor': [22.8, 11.6, 13.4, 6.1],
+  'adimali': [18.2, 9.8, 11.2, 5.1],
+}
+const FALLBACK_RECOMMENDATION: Record<string, string> = {
+  'rajakkad': 'Prioritize Rajakkad for field verification and relocation-assessment screening.',
+  'kanthalloor': 'Review access-route alternatives for Kanthalloor and monitor flood hazard.',
+  'marayoor': 'Monitor Marayoor flood risk; include in near-term screening.',
+  'adimali': 'No immediate relocation indication for Adimali; continue routine monitoring.',
+}
+
+function fallbackVulnLevel(score: number): 'VERY HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY LOW' {
+  if (score >= 80) return 'VERY HIGH'
+  if (score >= 60) return 'HIGH'
+  if (score >= 40) return 'MEDIUM'
+  if (score >= 20) return 'LOW'
+  return 'VERY LOW'
+}
+
+// Build a complete, well-formed HabitationDetail from a list item for
+// non-Munnar habitations (used only when the API is unreachable). Mirrors the
+// backend contract: no Munnar history/suitability text is inherited.
 function buildFallbackDetail(id: string): HabitationDetail {
   const listItem = DEMO_HABITATIONS.find(h => h.id === id)
   if (!listItem) return DEMO_MUNNAR_CENTRAL
+  const population = listItem.population
+  const households = Math.round(population / 4)
+  const vuln = FALLBACK_VULNERABILITY[id]
+  const level = fallbackVulnLevel(vuln)
+  const baseline = listItem.risk_score - listItem.risk_change
+  const comps = FALLBACK_RISK_COMPONENTS[id]
+  const hazardLabel = listItem.primary_hazard.replace('_', ' ').toLowerCase()
+  const hazardTitle = hazardLabel.charAt(0).toUpperCase() + hazardLabel.slice(1)
+  const sourceText = listItem.primary_hazard === 'LANDSLIDE'
+    ? 'KSDMA Landslide Susceptibility Map + IMD Rainfall (DEMO)'
+    : 'Bhuvan/ISRO Kerala 2019 flood-event overlay + CWC River Level (DEMO)'
+  const riskComp = Math.round(0.35 * listItem.risk_score * 100) / 100
+  const vulnComp = Math.round(0.2 * vuln * 100) / 100
+  const histComp = Math.round(0.15 * FALLBACK_HISTORICAL[id] * 100) / 100
+  const urgComp = Math.round(0.15 * FALLBACK_URGENCY[id] * 100) / 100
+  const popComp = Math.round((FALLBACK_RPI[id] - riskComp - vulnComp - histComp - urgComp) * 100) / 100
+
   return {
-    ...DEMO_MUNNAR_CENTRAL,
     id: listItem.id,
     name: listItem.name,
     ward: listItem.ward,
     taluk: listItem.taluk,
     district: listItem.district,
-    population: listItem.population,
-    households: Math.round(listItem.population / 4),
+    state: 'Kerala',
+    population,
+    households,
+    area_ha: Math.round(population / 340 * 10) / 10,
     latitude: listItem.latitude,
     longitude: listItem.longitude,
-    risk: {
-      ...DEMO_MUNNAR_CENTRAL.risk,
-      current: listItem.risk_score,
-      baseline: listItem.risk_score - listItem.risk_change,
-      change: listItem.risk_change,
-    },
-    relocation_priority: {
-      ...DEMO_MUNNAR_CENTRAL.relocation_priority,
-      priority: listItem.priority,
-    },
     hazards: [{
       type: listItem.primary_hazard,
-      intensity: listItem.risk_score,
+      intensity: Math.round(comps[0] / 0.4 * 10) / 10,
       data_type: 'DERIVED',
-      source: 'Sentinel AI Risk Engine (DEMO)',
-      description: `Primary hazard: ${listItem.primary_hazard}. Risk score ${listItem.risk_score}/100.`,
+      source: sourceText,
+      description: `${hazardTitle} hazard exposure — risk elevated (DEMO).`,
     }],
+    vulnerability: {
+      overall: vuln,
+      level,
+      demographic: vuln + 4,
+      socioeconomic: vuln - 6,
+      infrastructure: vuln + 2,
+      accessibility: vuln - 2,
+      data_type: 'DERIVED',
+    },
+    risk: {
+      current: listItem.risk_score,
+      baseline,
+      change: listItem.risk_change,
+      hazard_component: comps[0],
+      exposure_component: comps[1],
+      vulnerability_component: comps[2],
+      interaction_component: comps[3],
+      data_type: 'DERIVED',
+      computed_at: '2024-08-15T06:00:00Z',
+    },
+    relocation_priority: {
+      priority: listItem.priority,
+      rpi_score: FALLBACK_RPI[id],
+      risk_component: riskComp,
+      vulnerability_component: vulnComp,
+      historical_impact_component: histComp,
+      urgency_component: urgComp,
+      exposed_population_component: popComp,
+      data_type: 'RECOMMENDATION',
+    },
+    evidence_chain: [
+      { step: 1, label: 'HAZARD', description: `${hazardTitle} hazard exposure active`, data_type: 'DERIVED', source: sourceText, value: `${listItem.primary_hazard} hazard — risk elevated` },
+      { step: 2, label: 'EXPOSURE', description: 'Population within hazard zone', data_type: 'DERIVED', source: 'Census 2011 projected + Bhuvan LULC (DEMO)', value: `${population.toLocaleString()} persons | ${households.toLocaleString()} households` },
+      { step: 3, label: 'VULNERABILITY', description: 'Structural and access vulnerability', data_type: 'DERIVED', source: 'Census + KSDMA + Field Data (DEMO)', value: `${vuln}/100 — ${level}` },
+      { step: 4, label: 'RISK', description: 'Composite risk score', data_type: 'DERIVED', source: 'Sentinel AI Risk Engine (DEMO)', value: `${listItem.risk_score}/100 (Baseline: ${baseline}, Change: ${listItem.risk_change > 0 ? '+' : ''}${listItem.risk_change})` },
+      { step: 5, label: 'PRIORITY', description: 'Relocation priority assessment', data_type: 'RECOMMENDATION', source: 'Sentinel AI RPI Engine (DEMO)', value: `${listItem.priority} — RPI ${FALLBACK_RPI[id]}/100` },
+    ],
+    red_zone_status: 'NOT_RECOMMENDED',
+    permanent_settlement_suitable: true,
+    permanent_suitability_note:
+      `No permanent-unsuitability determination has been made for ${listItem.name}. ` +
+      'Operational risk is elevated and is separate from permanent settlement suitability. ' +
+      'Official assessment is required before any permanent suitability conclusion (DEMO — not an official designation).',
+    system_recommendation: FALLBACK_RECOMMENDATION[id],
+    historical_context: {
+      events: [],
+      gsi_2018_note:
+        `No habitation-specific event record is verified for ${listItem.name} in this DEMO dataset. ` +
+        'Historical-impact indicators are ESTIMATED from district-level records.',
+      data_type: 'ESTIMATED',
+    },
     data_status: 'DEMO',
+    last_updated: '2024-08-15T06:00:00Z',
   }
 }
 
@@ -325,23 +422,23 @@ export function HabitationInvestigation() {
           className="h-full w-full"
         />
 
-        {/* GIS context labels */}
+        {/* Map layer legend — only layers actually rendered by the map */}
         <div className="absolute left-3 top-3 flex flex-col gap-1.5">
           <div className="rounded border border-slate-700 bg-slate-900/95 px-2.5 py-2">
-            <div className="text-2xs text-slate-500 mb-1.5">GIS Context</div>
-            {[
-              { color: 'bg-orange-500', label: 'Landslide susceptibility' },
-              { color: 'bg-blue-500', label: 'Flood buffer zone' },
-              { color: 'bg-red-500', label: 'Habitation boundary' },
-              { color: 'bg-yellow-500', label: 'Debris/runout zone' },
-              { color: 'bg-green-500', label: 'Muster point' },
-            ].map(({ color, label }) => (
-              <div key={label} className="flex items-center gap-1.5 mb-0.5">
-                <span className={clsx('h-2 w-2 rounded-sm flex-shrink-0', color)} />
-                <span className="text-2xs text-slate-400">{label}</span>
-              </div>
-            ))}
-            <p className="mt-1.5 text-2xs text-amber-500/70">Layers: DEMO — Bhuvan WMS</p>
+            <div className="text-2xs text-slate-500 mb-1.5">Map Layers</div>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="h-2 w-2 rounded-full bg-red-500 flex-shrink-0" />
+              <span className="text-2xs text-slate-400">Habitation point (risk-graded)</span>
+            </div>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="h-2 w-2 rounded-sm bg-blue-500 flex-shrink-0" />
+              <span className="text-2xs text-slate-400">Kerala 2019 flood event (Bhuvan/ISRO overlay)</span>
+            </div>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="h-2 w-2 rounded-sm bg-slate-500 flex-shrink-0" />
+              <span className="text-2xs text-slate-400">Basemap: OpenStreetMap</span>
+            </div>
+            <p className="mt-1.5 text-2xs text-amber-500/70">Overlay is a historical event layer, not a live hazard feed; it renders only when the ISRO/NRSC WMS responds.</p>
           </div>
         </div>
 

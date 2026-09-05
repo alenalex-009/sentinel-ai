@@ -1,7 +1,13 @@
 import { ExternalLink, Database, AlertTriangle } from 'lucide-react'
 import { DataTypeBadge } from '../components/ui/DataTypeBadge'
 import { FreshnessBadge } from '../components/ui/FreshnessBadge'
+import { ApiStatusBanner } from '../components/ui/ApiStatusBanner'
+import { useApiWithFallback } from '../hooks/useApiWithFallback'
+import { api } from '../api/client'
 import clsx from 'clsx'
+
+type SourceStatus = 'LIVE' | 'DEMO' | 'UNAVAILABLE' | 'STALE'
+type SourceDataType = 'OBSERVED' | 'DERIVED' | 'ESTIMATED'
 
 interface DatasetEntry {
   id: string
@@ -12,13 +18,67 @@ interface DatasetEntry {
   used_for: string
   year_reference: string
   update_frequency: string
-  data_type_label: 'OBSERVED' | 'DERIVED' | 'ESTIMATED'
-  status: 'DEMO' | 'UNAVAILABLE' | 'STALE'
+  data_type_label: SourceDataType
+  status: SourceStatus
   limitations: string
   model_version?: string
 }
 
-const DATASETS: DatasetEntry[] = [
+// Shape of one entry in the backend data-source registry (single source of
+// truth when the API is reachable). Only Bhuvan WMS availability is probed at
+// runtime; every other source is DEMO because no live integration exists.
+interface RegistrySource {
+  id: string
+  name: string
+  organization: string
+  url: string
+  data_type: string
+  data_types?: string[]
+  used_for: string
+  year_reference: string
+  update_frequency: string
+  availability: string
+  last_checked?: string | null
+  last_successful?: string | null
+  age_hours?: number | null
+  limitations?: string
+  model_version?: string | null
+  error_message?: string | null
+}
+
+function normalizeStatus(value: string): SourceStatus {
+  return (['LIVE', 'DEMO', 'UNAVAILABLE', 'STALE'] as SourceStatus[]).includes(value as SourceStatus)
+    ? (value as SourceStatus)
+    : 'DEMO'
+}
+
+function normalizeDataType(value: string): SourceDataType {
+  return (['OBSERVED', 'DERIVED', 'ESTIMATED'] as SourceDataType[]).includes(value as SourceDataType)
+    ? (value as SourceDataType)
+    : 'DERIVED'
+}
+
+function adaptRegistry(registry: RegistrySource[]): DatasetEntry[] {
+  return registry.map((s) => ({
+    id: s.id,
+    name: s.name,
+    organization: s.organization,
+    url: s.url,
+    data_types: s.data_types && s.data_types.length > 0 ? s.data_types : [s.data_type],
+    used_for: s.used_for,
+    year_reference: s.year_reference,
+    update_frequency: s.update_frequency,
+    data_type_label: normalizeDataType(s.data_type),
+    status: normalizeStatus(s.availability),
+    limitations: s.limitations || '',
+    model_version: s.model_version || undefined,
+  }))
+}
+
+// ─── Offline snapshot (used only when the backend API is unreachable) ────────
+// Content is intentionally aligned with the backend registry. When the API is
+// up, this page renders the live registry instead of this copy.
+const FALLBACK_DATASETS: DatasetEntry[] = [
   {
     id: 'ksdma-landslide',
     name: 'Landslide Susceptibility Map',
@@ -61,16 +121,16 @@ const DATASETS: DatasetEntry[] = [
   },
   {
     id: 'bhuvan-flood',
-    name: 'Flood Hazard Layer',
-    organization: 'ISRO / NRSC — Bhuvan',
+    name: 'Kerala Disaster Event Layers (Bhuvan WMS)',
+    organization: 'ISRO / NRSC — Bhuvan (Bhuvan is the ISRO/NRSC geospatial platform)',
     url: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     data_types: ['Raster', 'WMS'],
-    used_for: 'Flood hazard component of risk model. Map overlay in GIS workspace.',
-    year_reference: '2021',
-    update_frequency: 'Periodic',
+    used_for: 'Visual map overlay of historical Kerala disaster events (Kerala 2019 event; Oct 2021 landslides). Overlay-only — NOT a numeric input to the risk engine.',
+    year_reference: '2019 & 2021 historical events',
+    update_frequency: 'Periodic (historical product)',
     data_type_label: 'OBSERVED',
     status: 'DEMO',
-    limitations: 'Bhuvan WMS may be unreachable from demo environment. Layer shown as DEMO/UNAVAILABLE when offline.',
+    limitations: 'Historical event layers only — no live hazard feed. Service can be slow; tiles may lag or fail when the network is unavailable. Reachability is probed at request time.',
   },
   {
     id: 'census-2011',
@@ -137,19 +197,65 @@ const DATASETS: DatasetEntry[] = [
     status: 'DEMO',
     limitations:
       'Weights are configurable project baselines — not official government formulas. ' +
-      'Risk = 0.40×Hazard + 0.20×Exposure + 0.25×Vulnerability + 0.15×Interaction. ' +
+      'Risk = 0.40×Hazard + 0.20×Exposure + 0.25×Vulnerability + 0.15×Interaction, ' +
+      'plus a deterministic event-escalation term for current operational risk. ' +
       'All outputs are DERIVED and require human authority review.',
     model_version: 'v0.1.0 — SIH demo build',
   },
+  {
+    id: 'ortools-optimizer',
+    name: 'OR-Tools CP-SAT Optimizer',
+    organization: 'Google OR-Tools (open source)',
+    url: 'https://developers.google.com/optimization',
+    data_types: ['Computed'],
+    used_for: 'Multi-site relocation allocation optimization',
+    year_reference: 'v9.10',
+    update_frequency: 'On demand',
+    data_type_label: 'DERIVED',
+    status: 'DEMO',
+    limitations:
+      'Optimization results are RECOMMENDATION only and are computed from demo inputs. ' +
+      'Requires human authority review before any relocation action.',
+    model_version: 'OR-Tools 9.10 CP-SAT',
+  },
+  {
+    id: 'graphhopper-routing',
+    name: 'OpenStreetMap Road Network Routing (GraphHopper)',
+    organization: 'OpenStreetMap (ODbL) / GraphHopper (self-hosted)',
+    url: 'http://localhost:8989',
+    data_types: ['Road network', 'Route'],
+    used_for: 'Road-network distance and travel time between habitations and candidate sites (region-aware: kerala / vizag / assam)',
+    year_reference:
+      'OSM via Overpass API 2026-09-04. Loaded: Kerala (Idukki pilot region — covers all Kerala prototype habitations), Vizag (Visakhapatnam urban pilot), Assam (Guwahati urban pilot). Prototype-area coverage only, not full-state.',
+    update_frequency: 'On demand (cached 5 min)',
+    data_type_label: 'DERIVED',
+    status: 'UNAVAILABLE',
+    limitations:
+      'Probed at request time. LIVE only when every region GraphHopper service answered. ' +
+      'Road distance is not a geodesic or demo estimate; travel time is an estimate, not ' +
+      'official emergency travel time. Datasets are prototype-area extracts (Idukki / ' +
+      'Vizag city / Guwahati), not full-state coverage.',
+    model_version: 'GraphHopper 8.0 (profile: car)',
+  },
 ]
 
-const STATUS_COLORS = {
+const STATUS_COLORS: Record<SourceStatus, string> = {
+  LIVE: 'border-green-500/30 bg-green-500/8 text-green-400',
   DEMO: 'border-amber-500/30 bg-amber-500/8 text-amber-400',
   UNAVAILABLE: 'border-red-500/30 bg-red-500/8 text-red-400',
   STALE: 'border-orange-500/30 bg-orange-500/8 text-orange-400',
 }
 
 export function DataSources() {
+  const { data: liveDatasets, error, source } = useApiWithFallback<DatasetEntry[]>(
+    () =>
+      api
+        .getDataSources()
+        .then((res) => adaptRegistry((res as { sources: RegistrySource[] }).sources)),
+    FALLBACK_DATASETS,
+  )
+  const datasets = liveDatasets ?? FALLBACK_DATASETS
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
@@ -159,10 +265,16 @@ export function DataSources() {
             <h1 className="text-sm font-semibold text-slate-200">Data & Sources</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               Dataset registry — provenance, vintage, limitations, and data type for every input used by Sentinel AI.
+              {source === 'api'
+                ? ' Showing the live backend registry.'
+                : source === 'demo_fallback'
+                ? ' API unreachable — showing the offline registry snapshot.'
+                : ''}
             </p>
           </div>
           <FreshnessBadge status="DEMO" />
         </div>
+        {error && <ApiStatusBanner source={source} error={error} className="mt-2" />}
       </div>
 
       {/* Trust banner */}
@@ -170,8 +282,10 @@ export function DataSources() {
         <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/8 px-3 py-2">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
           <p className="text-xs text-amber-400/80">
-            All data in this demo is labelled DEMO. Live connections to IMD, CWC, Bhuvan and KSDMA are not active.
-            Sentinel AI never fabricates live government data. When external sources are unavailable, data is shown as DEMO or UNAVAILABLE.
+            No live IMD / CWC / KSDMA feeds are connected — those entries are DEMO (static snapshot).
+            The Bhuvan WMS overlay (ISRO/NRSC Kerala disaster event layers) is probed at request time;
+            a LIVE status means the service answered a tile request, not that live data is ingested.
+            Sentinel AI never fabricates live government data.
           </p>
         </div>
       </div>
@@ -179,7 +293,7 @@ export function DataSources() {
       {/* Dataset table */}
       <div className="flex-1 overflow-auto p-4">
         <div className="flex flex-col gap-3">
-          {DATASETS.map(ds => (
+          {datasets.map(ds => (
             <div
               key={ds.id}
               className="rounded-lg border border-slate-800 bg-slate-900 p-4"

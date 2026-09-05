@@ -1,6 +1,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
-import type { HabitationListItem } from "../../types";
+import type {
+  DataStatus,
+  GeoJsonFeatureCollection,
+  HabitationListItem,
+  Priority,
+} from "../../types";
 import { DEMO_HABITATIONS } from "../../data/idukki-seed";
 
 // Risk score → color
@@ -16,6 +21,16 @@ interface MapContainerProps {
   selectedHabitationId?: string | null;
   onHabitationSelect?: (id: string) => void;
   showHazardLayer?: boolean;
+  /** PostGIS-backed GeoJSON FeatureCollection (habitation points). When present,
+   *  marker geometry is taken from this API-provided data instead of the seed. */
+  habitationGeoJSON?: GeoJsonFeatureCollection | null;
+  /** Attribution label shown under the map describing the point source. */
+  pointsSourceLabel?: string;
+  /** When false, clicking a marker only selects the habitation — it does NOT
+   *  also open the map popup. Pages that render their own selection card (e.g.
+   *  Risk Intelligence) set this so one click never shows two overlapping
+   *  popups with the same content. */
+  clickPopup?: boolean;
   className?: string;
 }
 
@@ -24,11 +39,63 @@ export function MapContainer({
   selectedHabitationId,
   onHabitationSelect,
   showHazardLayer = false,
+  habitationGeoJSON = null,
+  pointsSourceLabel = "\u25CF DEMO \u2014 Habitation points are illustrative",
+  clickPopup = true,
   className = "",
 }: MapContainerProps) {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+
+  // Marker geometry source: PostGIS GeoJSON (API) when provided, else the
+  // habitation props (seed). Missing display attributes are filled from the
+  // seed so popups/labels never render undefined values.
+  const markerItems: HabitationListItem[] = (() => {
+    if (habitationGeoJSON && habitationGeoJSON.features?.length) {
+      return habitationGeoJSON.features.map((f) => {
+        const p = f.properties ?? {}
+        const [lon, lat] = f.geometry.coordinates
+        const seed = DEMO_HABITATIONS.find((x) => x.id === p.id)
+        return {
+          id: p.id,
+          name: p.name ?? seed?.name ?? p.id,
+          ward: p.ward ?? seed?.ward ?? "",
+          taluk: p.taluk ?? seed?.taluk ?? "",
+          district: seed?.district ?? "idukki",
+          population: p.population ?? seed?.population ?? 0,
+          risk_score: p.risk_score ?? seed?.risk_score ?? 0,
+          risk_change: p.risk_change ?? 0,
+          priority: (p.priority as Priority) ?? seed?.priority ?? "MONITOR",
+          primary_hazard: seed?.primary_hazard ?? "LANDSLIDE",
+          latitude: lat,
+          longitude: lon,
+          data_status: (p.data_status as DataStatus) ?? "DEMO",
+        } as HabitationListItem
+      })
+    }
+    return habitations
+  })()
+
+  const geojsonData: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: markerItems.map((h) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [h.longitude, h.latitude] },
+      properties: {
+        id: h.id,
+        name: h.name,
+        ward: h.ward,
+        taluk: h.taluk,
+        population: h.population,
+        risk_score: h.risk_score,
+        risk_change: h.risk_change,
+        priority: h.priority,
+        primary_hazard: h.primary_hazard,
+        color: riskColor(h.risk_score),
+      },
+    })),
+  }
 
   const handleSelect = useCallback(
     (id: string) => onHabitationSelect?.(id),
@@ -44,6 +111,10 @@ export function MapContainer({
       // OpenStreetMap — free raster basemap
       style: {
         version: 8,
+        // Glyph PBF server for symbol layers (habitation name labels). The
+        // MapLibre demo font server is the canonical free source; it hosts
+        // "Open Sans Semibold" only, so text-font must not name other stacks.
+        glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
         sources: {
           osm: {
             type: "raster",
@@ -76,81 +147,34 @@ export function MapContainer({
     );
 
     map.on("load", () => {
-      // --- Bhuvan WMS: Flood Hazard Layer (ISRO/NRSC) ---
-      // Added as WMS source — will show UNAVAILABLE if Bhuvan is unreachable
-      map.addSource("bhuvan-flood", {
+      // --- Bhuvan WMS (ISRO/NRSC geospatial platform): Kerala 2019 disaster
+      // event overlay. Layer `disaster:Kerala_2019_Event` was verified against
+      // the live capabilities document; the previous `flood_hazard` layer name
+      // never existed and the WMS returned LayerNotDefined for every tile.
+      // Historical event overlay only — visual context, not a numeric risk input.
+      map.addSource("bhuvan-2019", {
         type: "raster",
         tiles: [
-          "https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=flood_hazard&STYLES=&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}",
+          "https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=disaster:Kerala_2019_Event&STYLES=&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}",
         ],
         tileSize: 256,
-        attribution: "Bhuvan / ISRO-NRSC (DEMO)",
+        attribution: "Bhuvan / ISRO-NRSC — Kerala 2019 event layer",
       });
 
       map.addLayer({
-        id: "bhuvan-flood-layer",
+        id: "bhuvan-2019-layer",
         type: "raster",
-        source: "bhuvan-flood",
+        source: "bhuvan-2019",
         paint: { "raster-opacity": showHazardLayer ? 0.5 : 0 },
         layout: { visibility: showHazardLayer ? "visible" : "none" },
       });
 
-      // --- Idukki district boundary (approximate GeoJSON) ---
-      map.addSource("idukki-boundary", {
-        type: "geojson",
-        data: {
-          type: "Feature",
-          geometry: {
-            type: "Polygon",
-            // Approximate Idukki district boundary for demo
-            coordinates: [
-              [
-                [76.7, 9.8],
-                [77.4, 9.8],
-                [77.4, 10.45],
-                [76.7, 10.45],
-                [76.7, 9.8],
-              ],
-            ],
-          },
-          properties: { name: "Idukki District" },
-        },
-      });
+      // NOTE: no district/habitation boundary polygons are drawn. The seed
+      // dataset contains points only; no real boundary geometry exists yet, so
+      // no approximate/decorative boundary layer is rendered.
 
-      map.addLayer({
-        id: "idukki-boundary-line",
-        type: "line",
-        source: "idukki-boundary",
-        paint: {
-          "line-color": "#3b82f6",
-          "line-width": 1.5,
-          "line-opacity": 0.6,
-          "line-dasharray": [4, 2],
-        },
-      });
-
-      // --- Habitation points ---
-      const geojson: GeoJSON.FeatureCollection = {
-        type: "FeatureCollection",
-        features: habitations.map((h) => ({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [h.longitude, h.latitude] },
-          properties: {
-            id: h.id,
-            name: h.name,
-            ward: h.ward,
-            taluk: h.taluk,
-            population: h.population,
-            risk_score: h.risk_score,
-            risk_change: h.risk_change,
-            priority: h.priority,
-            primary_hazard: h.primary_hazard,
-            color: riskColor(h.risk_score),
-          },
-        })),
-      };
-
-      map.addSource("habitations", { type: "geojson", data: geojson });
+      // --- Habitation points (seed props, or PostGIS GeoJSON when provided) ---
+      map.addSource("habitations", { type: "geojson", data: geojsonData });
 
       // Outer glow for high-risk
       map.addLayer({
@@ -196,7 +220,7 @@ export function MapContainer({
         source: "habitations",
         layout: {
           "text-field": ["get", "name"],
-          "text-font": ["Open Sans Regular"],
+          "text-font": ["Open Sans Semibold"],
           "text-size": 11,
           "text-offset": [0, 1.4],
           "text-anchor": "top",
@@ -214,7 +238,11 @@ export function MapContainer({
         if (!feature) return;
         const props = feature.properties as Record<string, unknown>;
         const id = props.id as string;
+        // Selection is handled by the page (list + selection card). Only open
+        // the inline map popup when the page does not render its own card,
+        // otherwise one click shows two popups with identical content.
         handleSelect(id);
+        if (!clickPopup) return;
 
         if (popupRef.current) popupRef.current.remove();
 
@@ -317,18 +345,28 @@ export function MapContainer({
     }
   }, [selectedHabitationId, habitations]);
 
+  // Replace marker geometry when a PostGIS GeoJSON payload arrives/updates
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource("habitations") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(geojsonData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [habitationGeoJSON, habitations]);
+
   // Toggle hazard layer
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
-    if (!map.getLayer("bhuvan-flood-layer")) return;
+    if (!map.getLayer("bhuvan-2019-layer")) return;
     map.setLayoutProperty(
-      "bhuvan-flood-layer",
+      "bhuvan-2019-layer",
       "visibility",
       showHazardLayer ? "visible" : "none",
     );
     map.setPaintProperty(
-      "bhuvan-flood-layer",
+      "bhuvan-2019-layer",
       "raster-opacity",
       showHazardLayer ? 0.5 : 0,
     );
@@ -343,7 +381,7 @@ export function MapContainer({
           Basemap: OpenStreetMap
         </span>
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-amber-600">
-          ● DEMO — Habitation points are illustrative
+          {pointsSourceLabel}
         </span>
       </div>
     </div>

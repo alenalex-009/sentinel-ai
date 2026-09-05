@@ -20,6 +20,52 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Routing (Phase 5, region-aware datasets) ────────────────────────────────
+  # One GraphHopper engine per routing region (graphs are built at import time
+  # and must not be hot-swapped). Each service imports its own OSM extract
+  # (bind-mounted read-only, gitignored) into its own persistent cache volume.
+  # All three services share graphhopper/config.yml: every extract is mounted
+  # at the same in-container path /data/region.osm, and caches are per-service
+  # named volumes, so each engine always imports its own region's dataset.
+  graphhopper-kerala:
+    build:
+      context: ./graphhopper
+      dockerfile: Dockerfile
+    container_name: sentinel_graphhopper
+    ports:
+      - '8989:8989'
+    volumes:
+      - ./osm/kerala.osm:/data/region.osm:ro
+      - ./graphhopper/config.yml:/gh/config.yml:ro
+      - ghdata_kerala:/data/cache
+    restart: unless-stopped
+
+  graphhopper-vizag:
+    build:
+      context: ./graphhopper
+      dockerfile: Dockerfile
+    container_name: sentinel_graphhopper_vizag
+    ports:
+      - '8991:8989'
+    volumes:
+      - ./osm/vizag.osm:/data/region.osm:ro
+      - ./graphhopper/config.yml:/gh/config.yml:ro
+      - ghdata_vizag:/data/cache
+    restart: unless-stopped
+
+  graphhopper-assam:
+    build:
+      context: ./graphhopper
+      dockerfile: Dockerfile
+    container_name: sentinel_graphhopper_assam
+    ports:
+      - '8992:8989'
+    volumes:
+      - ./osm/assam.osm:/data/region.osm:ro
+      - ./graphhopper/config.yml:/gh/config.yml:ro
+      - ghdata_assam:/data/cache
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -28,6 +74,9 @@ services:
     environment:
       DATABASE_URL: postgresql://sentinel:sentinel_dev@db:5432/sentinel_ai
       DEMO_MODE: 'true'
+      GRAPHHOPPER_KERALA_URL: http://graphhopper-kerala:8989
+      GRAPHHOPPER_VIZAG_URL: http://graphhopper-vizag:8989
+      GRAPHHOPPER_ASSAM_URL: http://graphhopper-assam:8989
     ports:
       - '8000:8000'
     depends_on:
@@ -55,3 +104,6 @@ services:
 
 volumes:
   pgdata:
+  ghdata_kerala:
+  ghdata_vizag:
+  ghdata_assam:

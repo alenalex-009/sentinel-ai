@@ -14,15 +14,40 @@ Pilot: **Idukki, Kerala** | Demo habitation: **Munnar Central, Ward 04, Devikula
 
 ---
 
-## Quick Start
+## Quick Start (Docker)
+
+Everything runs containerized — the only prerequisite is Docker Desktop (or
+Docker Engine + Compose v2). PostgreSQL/PostGIS is initialised automatically
+from `backend/db/schema.sql` + `seed.sql` on first start.
+
+### Option A — Core demo (no road routing; fastest)
 
 ```bash
-# Clone the repository
-git clone https://gitlab.com/sentinel-ai3/sentinel-ai.git
+git clone https://github.com/alenalex-009/sentinel-ai.git
 cd sentinel-ai
 
-# Start all services
-docker compose up --build
+docker compose up -d --build db backend frontend
+```
+
+The app runs fully (map, risk, relocation, data-status). Routing endpoints
+report `UNAVAILABLE` per region until datasets are added — never fabricated.
+
+### Option B — Full stack with GraphHopper road routing
+
+Routing artifacts are external and gitignored by design (large binaries). Fetch
+them once, then start everything:
+
+```bash
+# 1) GraphHopper 8.0 engine jar (pinned version, not committed)
+curl -L -o graphhopper/graphhopper-web-8.0.jar \
+  https://repo1.maven.org/maven2/com/graphhopper/graphhopper-web/8.0/graphhopper-web-8.0.jar
+
+# 2) Regional OSM road extracts (Kerala / Vizag / Assam — Overpass API).
+#    Linux / macOS / Git Bash:  bash osm/download_regions.sh
+#    See osm/README.md for bboxes, verification, and manual downloads.
+
+# 3) Start every service (db, backend, frontend, graphhopper-kerala/-vizag/-assam)
+docker compose up -d --build
 ```
 
 Services:
@@ -75,8 +100,9 @@ sentinel-ai/
 
 ## Map Stack
 
-- **Basemap**: CARTO Dark Matter (keyless)
-- **Hazard overlays**: Bhuvan / ISRO WMS
+- **Basemap**: OpenStreetMap raster tiles (keyless)
+- **Hazard overlays**: Bhuvan / ISRO WMS (historical event overlay)
+- **Road routing**: self-hosted GraphHopper 8.0 (Kerala / Vizag / Assam extracts)
 - **GIS library**: MapLibre GL
 - **Fallback**: Local GeoJSON seed data (DEMO MODE)
 

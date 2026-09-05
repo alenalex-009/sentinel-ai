@@ -5,6 +5,7 @@ import {
   ChevronRight, Info, ArrowRight,
 } from 'lucide-react'
 import { DataTypeBadge } from '../components/ui/DataTypeBadge'
+import { SiteScreeningMap } from '../components/map/SiteScreeningMap'
 import { FreshnessBadge } from '../components/ui/FreshnessBadge'
 import { PriorityBadge } from '../components/ui/PriorityBadge'
 import { RiskBadge } from '../components/ui/RiskBadge'
@@ -72,7 +73,7 @@ function SiteCard({
       <div className="flex items-start justify-between gap-2 mb-2">
         <div>
           <div className="text-xs font-semibold text-slate-200">{site.name}</div>
-          <div className="text-2xs text-slate-500 mt-0.5">{site.distance_km} km from Munnar Central</div>
+          <div className="text-2xs text-slate-500 mt-0.5">DEMO/ESTIMATED distance — {site.distance_km} km (seed input, not a measured road distance)</div>
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className="text-lg font-bold font-mono text-teal-400">{site.suitability_score}</span>
@@ -257,7 +258,7 @@ function AllocationPanel() {
         <table className="w-full">
           <thead>
             <tr className="border-b border-slate-800">
-              {['Site', 'Allocated', 'Distance', 'Utilisation', 'Surplus'].map(h => (
+              {['Site', 'Allocated', 'Dist. (est. input)', 'Utilisation', 'Surplus'].map(h => (
                 <th key={h} className="px-3 py-1.5 text-left text-2xs font-semibold uppercase tracking-wide text-slate-600">{h}</th>
               ))}
             </tr>
@@ -445,6 +446,19 @@ export function RelocationIntelligence() {
           {/* TAB: Candidate Sites */}
           {activeTab === 'sites' && (
             <div className="flex flex-col gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-200">Screening Range Map</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Zones are DERIVED screening ranges around technically screened candidates — sized from assessed
+                  safe capacity, colored from suitability/safety scores. Not official hazard boundaries. Click a site
+                  point to open its assessment; click a zone for its evidence.
+                </p>
+              </div>
+              <SiteScreeningMap
+                region="kerala"
+                selectedSiteId={selectedSiteId}
+                onSiteSelect={(id) => { setSelectedSiteId(id); setActiveTab('suitability') }}
+              />
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-semibold text-slate-200">Technically Screened Candidates</h2>
@@ -470,6 +484,7 @@ export function RelocationIntelligence() {
                   <Info className="h-3.5 w-3.5 text-slate-600 flex-shrink-0 mt-0.5" />
                   <p className="text-2xs text-slate-600 leading-relaxed">
                     These are Technically Screened Candidates only. Official government approval is required before any relocation. Suitability scores are DERIVED by Sentinel AI and are not official assessments.
+                    Distance figures are DEMO/ESTIMATED inputs — they are neither geodesic nor road-network measurements.
                   </p>
                 </div>
               </div>

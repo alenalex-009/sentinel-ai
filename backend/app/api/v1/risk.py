@@ -35,13 +35,10 @@ async def risk_priorities(
 ):
     """District-wide RPI ranking."""
     habitations = demo_data.get_habitation_list(district_id)["habitations"]
-    rpi_data = {
-        "munnar-central": 88,
-        "rajakkad": 74,
-        "kanthalloor": 61,
-        "marayoor": 52,
-        "adimali": 38,
-    }
+    # Canonical RPI scores live in demo_data (single source shared with the
+    # detail endpoint). Rajakkad = 78 (>=75) so its IMMEDIATE priority matches
+    # the engine classification threshold.
+    rpi_data = demo_data.RPI_BY_HABITATION
     ranked = sorted(
         [{**h, "rpi_score": rpi_data.get(h["id"], 0)} for h in habitations],
         key=lambda x: x["rpi_score"],

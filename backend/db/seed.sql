@@ -24,7 +24,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Risk scores
 INSERT INTO risk_scores (habitation_id, current_score, baseline_score, hazard_component, exposure_component, vulnerability_component, interaction_component, data_status) VALUES
-    ('munnar-central', 94, 65, 37.6, 16.8, 18.5, 9.7, 'DEMO'),
+    ('munnar-central', 94, 65, 35.2, 16.8, 18.46, 9.75, 'DEMO'),
     ('rajakkad', 81, 63, 31.2, 14.4, 16.8, 8.1, 'DEMO'),
     ('kanthalloor', 73, 62, 27.4, 13.2, 15.6, 7.2, 'DEMO'),
     ('marayoor', 61, 56, 22.8, 11.6, 13.4, 6.1, 'DEMO'),
@@ -48,5 +48,5 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO capacity_assessments (site_id, land_capacity, water_capacity, healthcare_capacity, education_capacity, infrastructure_capacity, environment_capacity, c_safe, bottleneck, data_status) VALUES
     ('site-a', 3800, 3200, 4500, 3600, 3400, 5000, 3200, 'water', 'DEMO'),
     ('site-b', 2800, 2100, 2600, 2400, 2900, 3500, 2100, 'water', 'DEMO'),
-    ('site-c', 2200, 1800, 3200, 2800, 3100, 2500, 1800, 'water', 'DEMO')
+    ('site-c', 1800, 2200, 3200, 2800, 3100, 2500, 1800, 'land', 'DEMO')
 ON CONFLICT DO NOTHING;

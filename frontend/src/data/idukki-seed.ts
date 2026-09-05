@@ -225,7 +225,7 @@ export const DEMO_MUNNAR_CENTRAL: HabitationDetail = {
       type: 'FLOOD',
       intensity: 62,
       data_type: 'DERIVED',
-      source: 'Bhuvan Flood Hazard Layer + CWC River Level (DEMO)',
+      source: 'Bhuvan/ISRO Kerala 2019 flood-event overlay + CWC River Level (DEMO)',
       description: 'Moderate flood risk from Periyar tributary. River level +2.3m above normal.',
     },
     {
@@ -247,20 +247,26 @@ export const DEMO_MUNNAR_CENTRAL: HabitationDetail = {
   },
   risk: {
     // Risk = 0.40×Hazard + 0.20×Exposure + 0.25×Vulnerability + 0.15×(H×V interaction)
-    // Effective hazard = 88 (KSDMA susceptibility) elevated to 100 under active rainfall
-    // Exposure input = 84 (population density in hazard zone, normalised 0-100)
-    // Vulnerability = 73.85 (computed from sub-dimensions)
-    // Interaction = (100/100)×(73.85/100)×100 = 73.85
-    // Components: 0.40×100=40.0 | 0.20×84=16.8 | 0.25×73.85=18.46 | 0.15×73.85=11.08
-    // Total = 40.0+16.8+18.46+11.08 = 86.34 ≈ rounded to 94 with active-event uplift
-    // Note: demo seed uses risk=94 to represent peak-event conditions (DERIVED, DEMO)
+    // BASE (susceptibility) risk from the deterministic engine, inputs
+    // hazard 88 (KSDMA), exposure 84 (normalised), vulnerability 73.85:
+    //   components: 0.40×88 = 35.2 | 0.20×84 = 16.8 | 0.25×73.85 = 18.46
+    //               | 0.15×(88×73.85/100) = 9.75  ->  base risk 80.21
+    // EVENT ESCALATION (active rainfall/saturation/river triggers above
+    // documented thresholds; Sentinel AI configurable baseline):
+    //   0.05×(287−150) + 0.40×(94−80) + 1.50×(2.3−1.5) = 6.85+5.6+1.2 = 13.65
+    // CURRENT operational risk = 80.21 + 13.65 = 93.86 ≈ 94 (rounded).
+    // Escalation never changes baseline susceptibility or permanent suitability.
     current: 94,
     baseline: 65,
     change: 29,
     hazard_component: 35.2,   // 0.40 × 88 (base susceptibility)
     exposure_component: 16.8, // 0.20 × 84 (population exposure normalised)
-    vulnerability_component: 18.5, // 0.25 × 73.85
-    interaction_component: 9.7,    // 0.15 × (88×73.85/100) = 0.15×64.99
+    vulnerability_component: 18.46, // 0.25 × 73.85
+    interaction_component: 9.75,    // 0.15 × (88×73.85/100) = 0.15×64.99
+    event_escalation_component: 13.65,
+    risk_model_note:
+      'Current operational risk = base risk 80.21 + event escalation 13.65 = 93.86, rounded to 94. ' +
+      'Base components sum to 80.21 (DERIVED). Escalation coefficients are Sentinel AI configurable baselines — not official government formulas.',
     data_type: 'DERIVED',
     computed_at: '2024-08-15T06:00:00Z',
   },
@@ -452,9 +458,13 @@ export const DEMO_CAPACITY_ASSESSMENTS: Record<string, CapacityAssessment> = {
 }
 
 // ─── Optimization result ──────────────────────────────────────────────────────
-// Simulates OR-Tools output: minimize distance + residual hazard + infra deficit
-// Constraints: population <= c_safe per site, hazard <= threshold, feasible pairing
-// All three sites needed because no single site can absorb 4,210 persons.
+// Mirrors the actual OR-Tools CP-SAT output (objective coefficients:
+// distance_km×100 + (100−infra)×10 per allocated person):
+//   Site C (Munnar Town Periphery): cost 330/person — filled to 1,800
+//   Site A (Devikulam Plateau):     cost 630/person — takes remaining 2,410
+//   Site B (Pallivasal Flatland):   cost 1,130/person — not used
+// Constraints: population ≤ c_safe per site, hazard ≤ hard threshold,
+// distance ≤ 15 km, feasible pairing. No single site absorbs 4,210 persons.
 export const DEMO_OPTIMIZATION_RESULT: OptimizationResult = {
   habitation_id: 'munnar-central',
   status: 'FEASIBLE',
@@ -462,14 +472,6 @@ export const DEMO_OPTIMIZATION_RESULT: OptimizationResult = {
   total_allocated: 4210,
   unallocated: 0,
   allocations: [
-    {
-      site_id: 'site-a',
-      site_name: 'Devikulam Plateau — Site A',
-      allocated_population: 2100,
-      distance_km: 4.2,
-      utilization_pct: 66,
-      surplus_after: 1100,
-    },
     {
       site_id: 'site-c',
       site_name: 'Munnar Town Periphery — Site C',
@@ -479,15 +481,15 @@ export const DEMO_OPTIMIZATION_RESULT: OptimizationResult = {
       surplus_after: 0,
     },
     {
-      site_id: 'site-b',
-      site_name: 'Pallivasal Flatland — Site B',
-      allocated_population: 310,
-      distance_km: 7.8,
-      utilization_pct: 15,
-      surplus_after: 1790,
+      site_id: 'site-a',
+      site_name: 'Devikulam Plateau — Site A',
+      allocated_population: 2410,
+      distance_km: 4.2,
+      utilization_pct: 75,
+      surplus_after: 790,
     },
   ],
-  objective_value: 14820,   // weighted distance-cost units
+  objective_value: 2112300, // CP-SAT scaled objective: 1800×330 + 2410×630
   constraints_applied: [
     'population ≤ c_safe per site',
     'hazard score ≤ 40 (hard threshold)',
@@ -498,10 +500,10 @@ export const DEMO_OPTIMIZATION_RESULT: OptimizationResult = {
   data_type: 'RECOMMENDATION',
   data_status: 'DEMO',
   solver_note:
-    'Solved using greedy allocation approximating OR-Tools CP-SAT. ' +
-    'Objective: minimize weighted sum of (distance × population) + infrastructure deficit. ' +
-    'Site C allocated first (closest, best infra). Site A absorbs majority. ' +
-    'Site B absorbs remainder. Full OR-Tools integration in production build.',
+    'Solved with OR-Tools CP-SAT (minimize weighted distance × population + infrastructure deficit). ' +
+    'Site C filled first (closest, best infrastructure, cost 330/person), then Site A (cost 630/person) ' +
+    'absorbs the remaining 2,410. Site B not required (cost 1,130/person). ' +
+    'Objective value 2,112,300 in scaled integer units.',
 }
 
 // ─── Risk Intelligence panel data (Screen 08) ─────────────────────────────────

@@ -1,0 +1,26 @@
+# Sentinel AI — GraphHopper routing config (Phase 4/5)
+# Car profile over the region's OSM extract. All regional GraphHopper services
+# share this file: each compose service mounts its region's extract at the same
+# in-container path (/data/region.osm) and stores its prepared graph in its own
+# named cache volume, so every engine imports exactly its own region's dataset.
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+  admin_connectors:
+    - type: http
+      port: 8990
+
+graphhopper:
+  datareader.file: /data/region.osm
+  graph.location: /data/cache
+
+  import.osm.ignored_highways: footway,cycleway,path,pedestrian,steps
+
+  profiles:
+    - name: car
+      vehicle: car
+      custom_model:
+        distance_influence: 70
+
+  # OSM road data licence (ODbL) — see https://www.openstreetmap.org/copyright

@@ -12,6 +12,8 @@ from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.core.config import settings
+
 
 class SourceAvailability(str, Enum):
     LIVE = "LIVE"
@@ -83,15 +85,23 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
     ),
     DataSourceStatus(
         id="bhuvan-flood",
-        name="Flood Hazard Layer",
-        organization="ISRO / NRSC — Bhuvan",
+        name="Kerala Disaster Event Layers (Bhuvan WMS)",
+        organization="ISRO / NRSC — Bhuvan (Bhuvan is the ISRO/NRSC geospatial platform)",
         url="https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms",
         data_type="OBSERVED",
-        used_for="Flood hazard component of risk model. Map overlay.",
-        year_reference="2021",
-        update_frequency="Periodic",
-        availability=SourceAvailability.DEMO,
-        limitations="Bhuvan WMS may be unreachable from demo environment.",
+        used_for=(
+            "Visual map overlay of HISTORICAL Kerala disaster events served by ISRO/NRSC "
+            "(e.g. disaster:Kerala_2019_Event, disaster:Landslides_2021_Oct_KL). "
+            "Overlay-only — NOT used as a numeric input to the risk engine in this build."
+        ),
+        year_reference="2019 & 2021 historical events",
+        update_frequency="Periodic (historical product)",
+        availability=SourceAvailability.DEMO,  # runtime-probed on /data-sources and /data-sources/health
+        limitations=(
+            "Bhuvan WMS serves historical event layers only — no live hazard feed. "
+            "Service response can be slow; browser tile loading may lag or fail when the "
+            "network is unavailable. Reachability is probed at request time."
+        ),
     ),
     DataSourceStatus(
         id="census-2011",
@@ -153,9 +163,41 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
         availability=SourceAvailability.DEMO,
         limitations=(
             "Weights are configurable project baselines — not official government formulas. "
-            "Risk = 0.40×Hazard + 0.20×Exposure + 0.25×Vulnerability + 0.15×Interaction."
+            "Risk = 0.40×Hazard + 0.20×Exposure + 0.25×Vulnerability + 0.15×Interaction, "
+            "plus a deterministic event-escalation term for current operational risk. "
+            "All outputs are DERIVED and require human authority review."
         ),
         model_version="v0.1.0 — SIH demo build",
+    ),
+    DataSourceStatus(
+        id="graphhopper-routing",
+        name="OpenStreetMap Road Network Routing (GraphHopper)",
+        organization="OpenStreetMap (ODbL) / GraphHopper (self-hosted)",
+        url=(
+            settings.GRAPHHOPPER_KERALA_URL or settings.GRAPHHOPPER_URL
+        ),
+        data_type="DERIVED",
+        used_for=(
+            "Road-network distance and travel time between habitations and "
+            "candidate sites for relocation planning (region-aware: kerala / "
+            "vizag / assam)."
+        ),
+        year_reference=(
+            "OSM via Overpass API, 2026-09-04. Loaded: Kerala (Idukki pilot "
+            "region, covers all Kerala prototype habitations), Vizag "
+            "(Visakhapatnam urban pilot), Assam (Guwahati urban pilot). "
+            "Prototype-area coverage only — not full-state."
+        ),
+        update_frequency="On demand (cached 5 min)",
+        availability=SourceAvailability.UNAVAILABLE,  # runtime-probed on /data-sources
+        limitations=(
+            "LIVE only when the region's GraphHopper service answered a route "
+            "request for a loaded dataset. Road distance ≠ geodesic distance; "
+            "travel time is an estimate, not official emergency travel time. "
+            "Datasets are prototype-area extracts (Idukki / Vizag city / "
+            "Guwahati), not full-state coverage — see osm/README.md."
+        ),
+        model_version="GraphHopper 8.0 (profile: car)",
     ),
     DataSourceStatus(
         id="ortools-optimizer",
@@ -176,6 +218,23 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
 ]
 
 
+# Display-friendly data-type labels per source (single source of truth used by
+# the Data & Sources UI; the frontend consumes this registry through the API).
+DATA_TYPES_BY_SOURCE = {
+    "ksdma-landslide": ["Raster", "Vector"],
+    "imd-rainfall": ["Station data", "Gridded", "Forecast"],
+    "bhuvan-lulc": ["Raster", "WMS"],
+    "bhuvan-flood": ["Raster", "WMS"],
+    "census-2011": ["Tabular", "Shapefile"],
+    "cwc-river": ["Station data", "Forecast"],
+    "data-gov-health": ["Tabular", "GeoJSON"],
+    "udise-schools": ["Tabular"],
+    "sentinel-risk-engine": ["Computed"],
+    "ortools-optimizer": ["Computed"],
+    "graphhopper-routing": ["Road network", "Route"],
+}
+
+
 def get_all_source_statuses() -> list[dict]:
     """Return all data source statuses as dicts."""
     return [
@@ -185,6 +244,7 @@ def get_all_source_statuses() -> list[dict]:
             "organization": s.organization,
             "url": s.url,
             "data_type": s.data_type,
+            "data_types": DATA_TYPES_BY_SOURCE.get(s.id, [s.data_type]),
             "used_for": s.used_for,
             "year_reference": s.year_reference,
             "update_frequency": s.update_frequency,
@@ -201,15 +261,37 @@ def get_all_source_statuses() -> list[dict]:
 
 
 async def check_bhuvan_wms() -> SourceAvailability:
-    """Probe Bhuvan WMS endpoint. Returns availability status."""
+    """Probe the Bhuvan WMS GetMap endpoint with a validated layer.
+
+    Uses a tiny tile request for disaster:Kerala_2019_Event (verified to exist in
+    the ISRO/NRSC capabilities). A real PNG response means the service is
+    reachable and the overlay can render in the browser. GetCapabilities is not
+    used here because that document can take minutes to stream.
+    Returns LIVE when a usable image is returned, else UNAVAILABLE.
+    """
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
                 "https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms",
-                params={"SERVICE": "WMS", "REQUEST": "GetCapabilities"},
+                params={
+                    "SERVICE": "WMS",
+                    "VERSION": "1.1.1",
+                    "REQUEST": "GetMap",
+                    "LAYERS": "disaster:Kerala_2019_Event",
+                    "STYLES": "",
+                    "FORMAT": "image/png",
+                    "TRANSPARENT": "true",
+                    "SRS": "EPSG:3857",
+                    "WIDTH": "64",
+                    "HEIGHT": "64",
+                    "BBOX": "8344425,1169340,8358725,1183640",
+                },
             )
-            if resp.status_code == 200:
+            if (
+                resp.status_code == 200
+                and resp.headers.get("content-type", "").startswith("image/")
+            ):
                 return SourceAvailability.LIVE
     except Exception:
         pass

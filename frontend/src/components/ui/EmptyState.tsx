@@ -61,8 +61,8 @@ const VARIANTS: Record<EmptyStateVariant, {
   },
   'missing-hazard-layer': {
     icon: <MapPin className="h-5 w-5" />,
-    title: 'Hazard layer unavailable',
-    description: 'Bhuvan WMS hazard layer could not be loaded. Map shows basemap only.',
+    title: 'Overlay unavailable',
+    description: 'Bhuvan WMS overlay (Kerala 2019 event, ISRO/NRSC) could not be loaded. Map shows basemap only.',
     color: 'text-amber-500',
   },
 }

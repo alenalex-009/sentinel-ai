@@ -6,12 +6,196 @@ Munnar Central figures are illustrative for SIH demonstration.
 """
 
 from datetime import datetime, timezone
+from math import floor
 from typing import Optional
 from app.models.types import (
     DataType, Priority, HazardType, VulnerabilityLevel, DataStatus
 )
+from app.services.risk_engine import classify_vulnerability
 
 DEMO_TIMESTAMP = datetime(2024, 8, 15, 6, 0, 0, tzinfo=timezone.utc)
+
+# ─── Canonical per-habitation derived values ─────────────────────────────────
+# Single source of truth shared by the habitation detail endpoint, the risk
+# priorities ranking and the DB seed. RPI/vulnerability values are DERIVED
+# demo rankings (configurable baseline weights). Only Munnar Central is
+# validated end-to-end against the deterministic risk engine.
+# RPI thresholds: >=75 IMMEDIATE, >=50 SHORT-TERM, >=30 MEDIUM-TERM, else MONITOR.
+RPI_BY_HABITATION = {
+    "munnar-central": 88,
+    "rajakkad": 78,       # >=75 -> IMMEDIATE (matches list priority)
+    "kanthalloor": 61,
+    "marayoor": 52,
+    "adimali": 38,
+}
+
+VULNERABILITY_BY_HABITATION = {
+    "munnar-central": 74,
+    "rajakkad": 68,
+    "kanthalloor": 59,
+    "marayoor": 51,
+    "adimali": 42,
+}
+
+# Risk component splits per habitation (base susceptibility model), matching
+# backend/db/seed.sql. hazard_component = 0.40 x hazard intensity etc.
+RISK_COMPONENTS_BY_HABITATION = {
+    "munnar-central": {"hazard": 35.2, "exposure": 16.8, "vulnerability": 18.46, "interaction": 9.75},
+    "rajakkad": {"hazard": 31.2, "exposure": 14.4, "vulnerability": 16.8, "interaction": 8.1},
+    "kanthalloor": {"hazard": 27.4, "exposure": 13.2, "vulnerability": 15.6, "interaction": 7.2},
+    "marayoor": {"hazard": 22.8, "exposure": 11.6, "vulnerability": 13.4, "interaction": 6.1},
+    "adimali": {"hazard": 18.2, "exposure": 9.8, "vulnerability": 11.2, "interaction": 5.1},
+}
+
+# Historical-impact / urgency sub-scores used to derive RPI components.
+HISTORICAL_BY_HABITATION = {
+    "munnar-central": 94, "rajakkad": 71, "kanthalloor": 55, "marayoor": 48, "adimali": 31,
+}
+URGENCY_BY_HABITATION = {
+    "munnar-central": 87, "rajakkad": 76, "kanthalloor": 63, "marayoor": 54, "adimali": 35,
+}
+
+HAZARD_SOURCE_LABEL = {
+    "LANDSLIDE": ("KSDMA Landslide Susceptibility Map + IMD Rainfall (DEMO)", "High landslide susceptibility zone with elevated rainfall/saturation triggers."),
+    "FLOOD": ("Bhuvan/ISRO Kerala 2019 flood-event overlay + CWC River Level (DEMO)", "Flood hazard zone — river level / rainfall driven. Overlay is historical context, not a live feed."),
+    "EROSION": ("Bhuvan Erosion Layer (DEMO)", "Erosion-prone zone."),
+    "CLOUDBURST": ("IMD Forecast (DEMO)", "Elevated cloudburst probability."),
+    "MULTI_HAZARD": ("KSDMA + Bhuvan composite (DEMO)", "Multi-hazard exposure zone."),
+}
+
+# System recommendation per habitation (RECOMMENDATION only, mirrors district
+# priority actions; never an official order).
+RECOMMENDATION_BY_HABITATION = {
+    "munnar-central": "Prioritize Munnar Central for immediate relocation assessment and candidate-site screening.",
+    "rajakkad": "Prioritize Rajakkad for field verification and relocation-assessment screening.",
+    "kanthalloor": "Review access-route alternatives for Kanthalloor and monitor flood hazard.",
+    "marayoor": "Monitor Marayoor flood risk; include in near-term screening.",
+    "adimali": "No immediate relocation indication for Adimali; continue routine monitoring.",
+}
+
+
+def _find_list_item(habitation_id: str) -> Optional[dict]:
+    """Return the demo list entry for a habitation, or None."""
+    items = get_habitation_list("idukki")
+    return next(
+        (h for h in items["habitations"] if h["id"] == habitation_id), None
+    )
+
+
+def build_detail_from_list_item(habitation_id: str) -> dict:
+    """Build a complete, well-formed HabitationDetail for any demo habitation.
+
+    Previously only Munnar Central returned a full detail object; every other
+    id returned a list-item-shaped dict (crashing clients expecting nested
+    risk/vulnerability/priority data) or a DB KeyError on the merge path.
+    All values here are DERIVED/ESTIMATED demo values consistent with the
+    habitation list and the canonical maps above.
+    """
+    h = _find_list_item(habitation_id)
+    if not h:
+        return {"error": "Habitation not found"}
+
+    hid = h["id"]
+    hazard_label = h["primary_hazard"]
+    hazard_source, hazard_desc = HAZARD_SOURCE_LABEL.get(
+        hazard_label, ("Composite DEMO hazard layer", "Composite hazard exposure (DEMO).")
+    )
+    vuln_overall = VULNERABILITY_BY_HABITATION[hid]
+    vuln_level = classify_vulnerability(vuln_overall)
+    rpi = RPI_BY_HABITATION[hid]
+    comps = RISK_COMPONENTS_BY_HABITATION[hid]
+    baseline = h["risk_score"] - h["risk_change"]
+    population = h["population"]
+    households = max(1, round(population / 4))
+
+    # Vulnerability sub-dimensions that reproduce `overall` under the engine
+    # weights: overall = 0.30D + 0.20S + 0.25I + 0.25A
+    vuln = {
+        "overall": vuln_overall,
+        "level": vuln_level,
+        "demographic": vuln_overall + 4,
+        "socioeconomic": vuln_overall - 6,
+        "infrastructure": vuln_overall + 2,
+        "accessibility": vuln_overall - 2,
+        "data_type": DataType.DERIVED,
+    }
+
+    risk_c = round(0.35 * h["risk_score"], 2)
+    vuln_c = round(0.20 * vuln_overall, 2)
+    hist_c = round(0.15 * HISTORICAL_BY_HABITATION[hid], 2)
+    urg_c = round(0.15 * URGENCY_BY_HABITATION[hid], 2)
+    pop_c = round(rpi - risk_c - vuln_c - hist_c - urg_c, 2)
+
+    return {
+        "data_status": DataStatus.DEMO,
+        "id": hid,
+        "name": h["name"],
+        "ward": h["ward"],
+        "taluk": h["taluk"],
+        "district": h["district"],
+        "state": "Kerala",
+        "population": population,
+        "households": households,
+        "area_ha": round(population / 340, 1),
+        "latitude": h["latitude"],
+        "longitude": h["longitude"],
+        "hazards": [
+            {
+                "type": hazard_label,
+                "intensity": round(comps["hazard"] / 0.40, 1),
+                "data_type": DataType.DERIVED,
+                "source": hazard_source,
+                "description": hazard_desc,
+            },
+        ],
+        "vulnerability": vuln,
+        "risk": {
+            "current": h["risk_score"],
+            "baseline": baseline,
+            "change": h["risk_change"],
+            "hazard_component": comps["hazard"],
+            "exposure_component": comps["exposure"],
+            "vulnerability_component": comps["vulnerability"],
+            "interaction_component": comps["interaction"],
+            "data_type": DataType.DERIVED,
+            "computed_at": DEMO_TIMESTAMP.isoformat(),
+        },
+        "relocation_priority": {
+            "priority": h["priority"],
+            "rpi_score": rpi,
+            "risk_component": risk_c,
+            "vulnerability_component": vuln_c,
+            "exposed_population_component": pop_c,
+            "historical_impact_component": hist_c,
+            "urgency_component": urg_c,
+            "data_type": DataType.RECOMMENDATION,
+        },
+        "evidence_chain": [
+            {"step": 1, "label": "HAZARD", "description": f"Active {hazard_label.replace('_', ' ').title()} hazard exposure", "data_type": DataType.DERIVED, "source": hazard_source, "value": f"{hazard_label.replace('_', ' ').title()} hazard active — risk elevated"},
+            {"step": 2, "label": "EXPOSURE", "description": "Population within hazard zone", "data_type": DataType.DERIVED, "source": "Census 2011 projected + Bhuvan LULC (DEMO)", "value": f"{population:,} persons | {households:,} households"},
+            {"step": 3, "label": "VULNERABILITY", "description": "Structural and access vulnerability", "data_type": DataType.DERIVED, "source": "Census + KSDMA + Field Data (DEMO)", "value": f"{vuln_overall}/100 — {vuln_level.value if hasattr(vuln_level, 'value') else vuln_level}"},
+            {"step": 4, "label": "RISK", "description": "Composite risk score", "data_type": DataType.DERIVED, "source": "Sentinel AI Risk Engine (DEMO)", "value": f"{h['risk_score']}/100 (Baseline: {baseline}, Change: {h['risk_change']:+})"},
+            {"step": 5, "label": "PRIORITY", "description": "Relocation priority assessment", "data_type": DataType.RECOMMENDATION, "source": "Sentinel AI RPI Engine (DEMO)", "value": f"{h['priority']} — RPI {rpi}/100"},
+        ],
+        "red_zone_status": "NOT_RECOMMENDED",
+        "permanent_settlement_suitable": True,
+        "permanent_suitability_note": (
+            f"No permanent-unsuitability determination has been made for {h['name']}. "
+            "Operational risk is elevated and is separate from permanent settlement "
+            "suitability. Official assessment is required before any permanent "
+            "suitability conclusion (DEMO — not an official designation)."
+        ),
+        "system_recommendation": RECOMMENDATION_BY_HABITATION[hid],
+        "historical_context": {
+            "events": [],
+            "gsi_2018_note": (
+                f"No habitation-specific event record is verified for {h['name']} in this "
+                "DEMO dataset. Historical-impact indicators are ESTIMATED from district-level records."
+            ),
+            "data_type": DataType.ESTIMATED,
+        },
+        "last_updated": DEMO_TIMESTAMP.isoformat(),
+    }
 
 
 def get_district_overview(district_id: str) -> dict:
@@ -221,13 +405,7 @@ def get_habitation_list(district_id: str, search: Optional[str] = None) -> dict:
 
 def get_habitation_detail(habitation_id: str) -> dict:
     if habitation_id != "munnar-central":
-        items = get_habitation_list("idukki")
-        match = next(
-            (h for h in items["habitations"] if h["id"] == habitation_id), None
-        )
-        if not match:
-            return {"error": "Habitation not found"}
-        return {"data_status": DataStatus.DEMO, **match}
+        return build_detail_from_list_item(habitation_id)
 
     return {
         "data_status": DataStatus.DEMO,
@@ -254,7 +432,7 @@ def get_habitation_detail(habitation_id: str) -> dict:
                 "type": HazardType.FLOOD,
                 "intensity": 62,
                 "data_type": DataType.DERIVED,
-                "source": "Bhuvan Flood Hazard Layer + CWC River Level (DEMO)",
+                "source": "Bhuvan/ISRO Kerala 2019 flood-event overlay + CWC River Level (DEMO)",
                 "description": "Moderate flood risk from Periyar tributary. River level +2.3m above normal.",
             },
             {
@@ -278,13 +456,24 @@ def get_habitation_detail(habitation_id: str) -> dict:
             "current": 94,
             "baseline": 65,
             "change": 29,
-            # Risk = 0.40*88 + 0.20*84 + 0.25*73.85 + 0.15*(88*73.85/100)
-            # = 35.2 + 16.8 + 18.46 + 9.75 = 80.21 (base)
-            # Demo seed uses risk=94 representing peak-event conditions (DERIVED, DEMO)
+            # Base (susceptibility) risk from the deterministic engine:
+            #   Risk = 0.40*88 + 0.20*84 + 0.25*73.85 + 0.15*(88*73.85/100)
+            #        = 35.2 + 16.8 + 18.46 + 9.75 = 80.21
+            # Event escalation (active triggers, above thresholds):
+            #   0.05*(287-150) + 0.40*(94-80) + 1.50*(2.3-1.5) = 13.65
+            # Current operational risk = 80.21 + 13.65 = 93.86 -> 94 (rounded).
+            # Escalation never changes baseline susceptibility or permanent suitability.
             "hazard_component": 35.2,   # 0.40 * 88 (base susceptibility)
             "exposure_component": 16.8, # 0.20 * 84 (population exposure normalised)
-            "vulnerability_component": 18.5,  # 0.25 * 73.85
-            "interaction_component": 9.7,     # 0.15 * (88*73.85/100)
+            "vulnerability_component": 18.46,  # 0.25 * 73.85
+            "interaction_component": 9.75,     # 0.15 * (88*73.85/100)
+            "event_escalation_component": 13.65,
+            "risk_model_note": (
+                "Current operational risk = base risk 80.21 + event escalation 13.65 "
+                "= 93.86, rounded to 94. Base components sum to 80.21 (DERIVED). "
+                "Escalation coefficients are Sentinel AI configurable baselines — "
+                "not official government formulas."
+            ),
             "data_type": DataType.DERIVED,
             "computed_at": DEMO_TIMESTAMP.isoformat(),
         },
@@ -572,9 +761,10 @@ def run_scenario_simulation(params: dict) -> dict:
     cap_reduction = params.get("capacity_reduction_pct", 0)
     road_disruption = params.get("road_disruption", False)
 
-    hazard_delta = (rainfall_mult - 1.0) * 37.6 * 1.4
+    hazard_delta = (rainfall_mult - 1.0) * 35.2 * 1.4
     simulated_risk = min(100, max(0, round(base_risk + hazard_delta)))
-    simulated_demand = round(4210 * (1 + pop_change / 100))
+    # Explicit half-up rounding so backend == frontend (JS Math.round) results.
+    simulated_demand = int(floor(4210 * (1 + pop_change / 100) + 0.5))
     total_capacity = 7100  # 3200 + 2100 + 1800
     effective_capacity = round(total_capacity * (1 - cap_reduction / 100))
     if road_disruption:

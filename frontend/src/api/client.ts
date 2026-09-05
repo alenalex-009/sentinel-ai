@@ -1,6 +1,8 @@
 // Sentinel AI — API client
 // All calls throw on non-2xx so useApiWithFallback can catch and use demo data.
 
+import type { HistoricalPeriodsResponse, ScreeningZonesResponse } from '../types'
+
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 async function fetchJSON<T>(path: string): Promise<T> {
@@ -54,6 +56,17 @@ export const api = {
   getHabitationsGeoJSON: (districtId = 'idukki') =>
     fetchJSON(`/api/v1/habitations/geojson/district/${districtId}`),
 
+  getCandidateSitesGeoJSON: (districtId = 'idukki') =>
+    fetchJSON(`/api/v1/relocation/sites/geojson?district_id=${districtId}`),
+
+  getSpatialDistance: (habitationId: string, siteId: string) =>
+    fetchJSON(`/api/v1/spatial/distance/${habitationId}/${siteId}`),
+
+  getSpatialProximity: (habitationId: string, radiusM?: number) =>
+    fetchJSON(
+      `/api/v1/spatial/proximity/${habitationId}${radiusM ? `?radius_m=${radiusM}` : ''}`,
+    ),
+
   // Risk
   getRiskIntelligence: (districtId = 'idukki', mode = 'current') =>
     fetchJSON(`/api/v1/risk/intelligence?district_id=${districtId}&mode=${mode}`),
@@ -89,4 +102,11 @@ export const api = {
 
   // Data sources
   getDataSources: () => fetchJSON('/api/v1/data-sources/'),
+
+  // Phase 5B — screening zones + historical periods
+  getScreeningZones: (districtId = 'idukki'): Promise<ScreeningZonesResponse> =>
+    fetchJSON(`/api/v1/spatial/zones?district_id=${districtId}`),
+
+  getHistoricalPeriods: (region = 'kerala'): Promise<HistoricalPeriodsResponse> =>
+    fetchJSON(`/api/v1/spatial/history/${region}`),
 }

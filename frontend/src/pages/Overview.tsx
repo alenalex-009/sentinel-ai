@@ -22,7 +22,7 @@ import { FreshnessBadge } from "../components/ui/FreshnessBadge";
 import { DEMO_DISTRICT_OVERVIEW, DEMO_HABITATIONS } from "../data/idukki-seed";
 import { useApiWithFallback } from "../hooks/useApiWithFallback";
 import { api } from "../api/client";
-import type { DistrictOverview, HabitationListItem } from "../types";
+import type { DistrictOverview, GeoJsonFeatureCollection, HabitationListItem } from "../types";
 import clsx from "clsx";
 
 const HAZARD_ICONS: Record<string, React.ReactNode> = {
@@ -229,6 +229,19 @@ export function Overview() {
   const overview = liveOverview ?? DEMO_DISTRICT_OVERVIEW;
   const d = overview.district;
 
+  // PostGIS-backed habitation points for the map (falls back to seed when the
+  // API/geometry is unavailable).
+  const { data: habGeoJSON } = useApiWithFallback<GeoJsonFeatureCollection | null>(
+    () => api.getHabitationsGeoJSON("idukki") as Promise<GeoJsonFeatureCollection>,
+    null,
+  );
+  const mapPointsSource =
+    habGeoJSON?._source === "postgis"
+      ? "Habitation points: PostGIS via API"
+      : habGeoJSON && habGeoJSON.features?.length
+        ? "Habitation points: API demo fallback"
+        : "● DEMO — Habitation points are illustrative";
+
   const handleSelect = (id: string) => {
     setSelectedId(id);
   };
@@ -332,6 +345,8 @@ export function Overview() {
       <div className="relative flex-1">
         <MapContainer
           habitations={DEMO_HABITATIONS}
+          habitationGeoJSON={habGeoJSON}
+          pointsSourceLabel={mapPointsSource}
           selectedHabitationId={selectedId}
           onHabitationSelect={handleSelect}
           showHazardLayer={showHazard}

@@ -17,7 +17,7 @@ import {
 // These are DERIVED values — not official government assessments
 const RPI_DATA = [
   { id: 'munnar-central', rpi: 88, vulnerability: 74, historical: 94, urgency: 87 },
-  { id: 'rajakkad',       rpi: 74, vulnerability: 68, historical: 71, urgency: 76 },
+  { id: 'rajakkad',       rpi: 78, vulnerability: 68, historical: 71, urgency: 76 },
   { id: 'kanthalloor',   rpi: 61, vulnerability: 59, historical: 55, urgency: 63 },
   { id: 'marayoor',      rpi: 52, vulnerability: 51, historical: 48, urgency: 54 },
   { id: 'adimali',       rpi: 38, vulnerability: 42, historical: 31, urgency: 35 },

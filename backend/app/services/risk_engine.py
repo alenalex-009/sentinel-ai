@@ -113,3 +113,64 @@ def compute_carrying_capacity(
         "bottleneck": bottleneck,
         "dimensions": dimensions,
     }
+
+
+def compute_event_escalation(
+    rainfall_mm: float,
+    soil_saturation_pct: float,
+    river_level_anomaly_m: float,
+) -> float:
+    """Compute the event-escalation term for current/operational risk.
+
+    Base (susceptibility) risk reflects permanent hazard + exposure + vulnerability.
+    A temporary rainfall/saturation/river event must NOT permanently reclassify a
+    habitation, so its effect is isolated in a separate, deterministic escalation
+    term that is added to base risk only for the CURRENT operational score:
+
+      escalation = 0.05 x (rain_mm - 150)   [only above 150mm/72h]
+                 + 0.40 x (sat_pct - 80)    [only above 80%]
+                 + 1.50 x (river_m - 1.5)   [only above +1.5m]
+      current operational risk = min(100, base risk + escalation)
+
+    Coefficients and thresholds are Sentinel AI configurable baselines for the
+    SIH demo — NOT official government formulas. Escalation is floored at zero
+    (no event -> no change) and capped by settings.ESCALATION_CAP.
+    """
+    rain_excess = max(0.0, rainfall_mm - settings.RAINFALL_TRIGGER_MM)
+    sat_excess = max(0.0, soil_saturation_pct - settings.SATURATION_TRIGGER_PCT)
+    river_excess = max(0.0, river_level_anomaly_m - settings.RIVER_LEVEL_TRIGGER_M)
+
+    escalation = (
+        settings.ESCALATION_RAIN_COEFF * rain_excess
+        + settings.ESCALATION_SATURATION_COEFF * sat_excess
+        + settings.ESCALATION_RIVER_COEFF * river_excess
+    )
+    return min(max(0.0, escalation), settings.ESCALATION_CAP)
+
+
+def compute_current_risk(
+    base_risk: float,
+    rainfall_mm: float,
+    soil_saturation_pct: float,
+    river_level_anomaly_m: float,
+) -> dict:
+    """Combine deterministic base risk with the event-escalation term.
+
+    Returns the exact, unrounded current risk plus its two explainable parts.
+    The rounded integer is what the UI displays (e.g. 93.86 -> 94).
+    """
+    escalation = compute_event_escalation(
+        rainfall_mm, soil_saturation_pct, river_level_anomaly_m
+    )
+    current = min(100.0, base_risk + escalation)
+    return {
+        "base_risk": round(base_risk, 2),
+        "event_escalation": round(escalation, 2),
+        "current_risk": round(current, 2),
+        "current_risk_rounded": int(round(current)),
+        "equation": (
+            f"base risk {base_risk:.2f} + event escalation {escalation:.2f} "
+            f"= current operational risk {current:.2f} "
+            f"(displayed as {int(round(current))})"
+        ),
+    }

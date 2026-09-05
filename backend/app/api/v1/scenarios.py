@@ -6,6 +6,7 @@ Never presented as live forecasts or authoritative data.
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from math import floor
 from typing import Optional
 from app.services.optimizer import run_optimization, build_sites_from_demo
 from app.services import demo_data
@@ -30,12 +31,12 @@ async def run_scenario(request: ScenarioRequest):
     total_capacity = 7100  # sum of all site c_safe values
 
     # Simulated risk: rainfall multiplier drives hazard component
-    hazard_component = 37.6
+    hazard_component = 35.2  # 0.40 x 88 base hazard susceptibility — matches demo seed
     hazard_delta = (request.rainfall_multiplier - 1.0) * hazard_component * 1.4
     simulated_risk = min(100, max(0, round(base_risk + hazard_delta)))
 
-    # Simulated demand
-    simulated_demand = round(base_demand * (1 + request.population_change_pct / 100))
+    # Simulated demand (explicit half-up rounding == frontend Math.round)
+    simulated_demand = int(floor(base_demand * (1 + request.population_change_pct / 100) + 0.5))
 
     # Simulated capacity
     effective_capacity = round(total_capacity * (1 - request.capacity_reduction_pct / 100))

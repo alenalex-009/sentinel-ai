@@ -14,7 +14,7 @@ const TRACE_STEPS = [
   { step: 1, node: 'OBSERVED HAZARDS', value: 'Landslide 88 | Flood 62 | Cloudburst 45 (KSDMA + IMD + CWC)', data_type: 'OBSERVED' as const, color: 'border-blue-500/40 bg-blue-500/8 text-blue-300' },
   { step: 2, node: 'EXPOSURE', value: '4,210 persons in hazard zone | 1,053 households | Exposure index 84/100', data_type: 'DERIVED' as const, color: 'border-violet-500/40 bg-violet-500/8 text-violet-300' },
   { step: 3, node: 'VULNERABILITY', value: '73.85/100 ≈ 74 — HIGH | Demo 78 · Socio 71 · Infra 76 · Access 69', data_type: 'DERIVED' as const, color: 'border-violet-500/40 bg-violet-500/8 text-violet-300' },
-  { step: 4, node: 'OPERATIONAL RISK', value: '94/100 (Baseline 65, Change +29) | Components: H 35.2 + E 16.8 + V 18.5 + I 9.7', data_type: 'DERIVED' as const, color: 'border-orange-500/40 bg-orange-500/8 text-orange-300' },
+  { step: 4, node: 'OPERATIONAL RISK', value: '94/100 (Baseline 65, Change +29) | Base risk 80.21 + event escalation 13.65 = 93.86 ≈ 94', data_type: 'DERIVED' as const, color: 'border-orange-500/40 bg-orange-500/8 text-orange-300' },
   { step: 5, node: 'RELOCATION PRIORITY', value: 'IMMEDIATE — RPI 88/100 | 0.35×94 + 0.20×74 + 0.15×84 + 0.15×94 + 0.15×87', data_type: 'RECOMMENDATION' as const, color: 'border-red-500/40 bg-red-500/8 text-red-300' },
   { step: 6, node: 'SITE / CAPACITY CHECK', value: '3 candidate sites screened | C_safe: A=3,200 B=2,100 C=1,800 | Total=7,100 | Demand=4,210', data_type: 'DERIVED' as const, color: 'border-violet-500/40 bg-violet-500/8 text-violet-300' },
   { step: 7, node: 'SYSTEM RECOMMENDATION', value: 'Initiate relocation assessment for Ward 04, Munnar Central. Multi-site allocation required.', data_type: 'RECOMMENDATION' as const, color: 'border-emerald-500/40 bg-emerald-500/8 text-emerald-300' },
@@ -125,6 +125,13 @@ export function DecisionIntelligence() {
               { label: 'Exposure (20%)', value: h.risk.exposure_component, note: '0.20 × 84' },
               { label: 'Vulnerability (25%)', value: h.risk.vulnerability_component, note: '0.25 × 73.85' },
               { label: 'Interaction (15%)', value: h.risk.interaction_component, note: '0.15 × (H×V)' },
+              ...(h.risk.event_escalation_component != null
+                ? [{
+                  label: 'Event Escalation',
+                  value: h.risk.event_escalation_component,
+                  note: '0.05×(287−150) + 0.40×(94−80) + 1.50×(2.3−1.5) = 13.65 — active event triggers only',
+                }]
+                : []),
             ].map(({ label, value, note }) => (
               <div key={label} className="rounded border border-slate-800 bg-slate-950 p-2">
                 <div className="text-2xs text-slate-500">{label}</div>
@@ -134,7 +141,11 @@ export function DecisionIntelligence() {
             ))}
           </div>
           <p className="text-2xs text-slate-600 mt-1">
-            Weights are configurable baselines — not official government formulas.
+            Base risk = 35.2 + 16.8 + 18.46 + 9.75 = 80.21 (deterministic model). Current operational
+            risk = base 80.21 + event escalation 13.65 = 93.86 ≈ 94 — escalation reflects active
+            rainfall/saturation/river triggers above documented thresholds and never changes permanent
+            settlement suitability. Weights and escalation coefficients are configurable Sentinel AI
+            baselines — not official government formulas.
           </p>
         </div>
 

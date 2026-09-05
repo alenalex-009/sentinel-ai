@@ -3,7 +3,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import district, habitations, risk, relocation, scenarios, data_status, validation
+from app.api.v1 import (
+    district, habitations, risk, relocation, scenarios, data_status, validation,
+    spatial, routing
+)
 from app.core.config import settings
 
 app = FastAPI(
@@ -50,6 +53,8 @@ app.include_router(relocation.router, prefix="/api/v1/relocation", tags=["Reloca
 app.include_router(scenarios.router, prefix="/api/v1/scenarios", tags=["Scenarios"])
 app.include_router(data_status.router, prefix="/api/v1/data-sources", tags=["Data Sources"])
 app.include_router(validation.router, prefix="/api/v1/validate", tags=["Validation"])
+app.include_router(spatial.router, prefix="/api/v1/spatial", tags=["Spatial"])
+app.include_router(routing.router, prefix="/api/v1/routing", tags=["Routing"])
 
 
 @app.get("/health")

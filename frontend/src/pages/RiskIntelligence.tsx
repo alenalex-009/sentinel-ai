@@ -172,6 +172,10 @@ export function RiskIntelligence() {
           selectedHabitationId={selectedId}
           onHabitationSelect={setSelectedId}
           showHazardLayer={showHazard}
+          // This page shows its own selected-habitation card; disable the
+          // inline map popup so one click never produces two popups with the
+          // same content.
+          clickPopup={false}
           className="h-full w-full"
         />
 
@@ -185,34 +189,38 @@ export function RiskIntelligence() {
 
         {/* Selected habitation popup */}
         {selected && (
-          <div className="absolute right-3 top-3 w-56 rounded-lg border border-slate-700 bg-slate-950/98 p-3">
-            <div className="text-2xs text-slate-500 mb-1">{selected.ward} · {selected.taluk}</div>
-            <div className="text-sm font-semibold text-slate-200 mb-2">{selected.name}</div>
-            <div className="flex items-center gap-3 mb-2">
+          <div className="absolute right-3 top-3 w-60 rounded-xl border border-slate-500/70 bg-slate-900/95 p-3.5 shadow-2xl shadow-black/60">
+            <div className="text-2xs font-semibold uppercase tracking-wide text-blue-300 mb-0.5">{selected.ward} · {selected.taluk}</div>
+            <div className="text-[15px] font-bold text-white mb-2.5">{selected.name}</div>
+            <div className="flex items-center gap-4 mb-2.5">
               <div>
-                <div className="text-2xs text-slate-500">RISK</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Risk</div>
                 <RiskBadge score={selected.risk_score} size="md" />
               </div>
               <div>
-                <div className="text-2xs text-slate-500">CHANGE</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Change</div>
                 <span className={clsx(
-                  'text-base font-bold font-mono',
+                  'text-lg font-bold font-mono',
                   selected.risk_change > 0 ? 'text-red-400' : 'text-green-400'
                 )}>
                   {selected.risk_change > 0 ? '+' : ''}{selected.risk_change}
                 </span>
               </div>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Population</div>
+                <div className="text-sm font-bold text-slate-100 leading-tight">
+                  {selected.population.toLocaleString()}
+                  <span className="ml-1 text-[10px] font-medium text-slate-400">persons</span>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2.5">
               <PriorityBadge priority={selected.priority} size="sm" />
-              <span className="text-2xs text-slate-500">{selected.primary_hazard}</span>
-            </div>
-            <div className="text-2xs text-slate-500 mb-2">
-              {selected.population.toLocaleString()} persons
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-200">{selected.primary_hazard}</span>
             </div>
             <button
               onClick={() => navigate(`/habitations/${selected.id}`)}
-              className="w-full rounded bg-blue-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 transition-colors"
+              className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-xs font-bold text-white shadow-md shadow-blue-950/50 hover:bg-blue-500 active:bg-blue-600 transition-colors"
             >
               Investigate →
             </button>

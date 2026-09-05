@@ -38,6 +38,11 @@ export interface RiskScore {
   exposure_component: number
   vulnerability_component: number
   interaction_component: number
+  // Deterministic event-escalation term: current = base components (sum of the
+  // four above) + event_escalation_component, rounded. Only present on the
+  // event-adjusted demo score (Munnar Central).
+  event_escalation_component?: number
+  risk_model_note?: string
   data_type: DataType
   computed_at: string
 }
@@ -275,4 +280,151 @@ export interface DecisionTraceStep {
   node: string
   value: string
   data_type: DataType
+}
+
+// ─── GIS / Spatial (Phase 3 — PostGIS geometry) ───────────────────────────────
+
+export interface GeoJsonPointGeometry {
+  type: 'Point'
+  coordinates: [number, number] // [lon, lat], EPSG:4326
+}
+
+export interface GeoJsonPointFeature {
+  type: 'Feature'
+  geometry: GeoJsonPointGeometry
+  properties: {
+    id: string
+    name?: string | null
+    ward?: string | null
+    taluk?: string | null
+    population?: number | null
+    households?: number | null
+    risk_score?: number | null
+    risk_change?: number | null
+    priority?: string | null
+    data_status?: string
+    // candidate-site properties (when the feature is a site)
+    suitability_score?: number | null
+    safe_capacity?: number | null
+    c_safe?: number | null
+    bottleneck?: string | null
+    hard_constraints_passed?: boolean | null
+  }
+}
+
+export interface GeoJsonFeatureCollection {
+  type: 'FeatureCollection'
+  features: GeoJsonPointFeature[]
+  data_status?: DataStatus
+  district_id?: string
+  _source?: string
+  geometry_source?: string
+  geometry_type?: string
+  srid?: number
+  note?: string
+  approval_status_note?: string
+}
+
+export interface SpatialDistance {
+  habitation_id: string
+  site_id: string
+  distance_m: number
+  distance_km: number
+  unit: 'm'
+  classification: DataType
+  method: string
+  distance_type: string
+  source_geometry: string
+  note: string
+  data_status: DataStatus
+  _source: string
+}
+
+export interface ProximateSiteResult {
+  site_id: string
+  site_name: string
+  distance_m: number
+  distance_km: number
+  c_safe?: number | null
+  bottleneck?: string | null
+  within_radius: boolean
+}
+
+export interface SpatialProximity {
+  habitation_id: string
+  radius_m: number
+  method: string
+  threshold_note: string
+  results: ProximateSiteResult[]
+  data_status: DataStatus
+  _source: string
+}
+
+
+// ─── Phase 5B — Derived screening zones + historical periods ────────────────
+
+export type ScreeningZoneStatus = 'red' | 'yellow' | 'green'
+
+export interface ScreeningZoneFeature {
+  type: 'Feature'
+  geometry: GeoJSON.Polygon
+  properties: {
+    site_id: string
+    site_name: string
+    status: ScreeningZoneStatus
+    label: string
+    classification: DataType
+    derived: boolean
+    authoritative: boolean
+    method: string
+    radius_km: number
+    basis: {
+      suitability_score?: number | null
+      safety_score?: number | null
+      bottleneck?: string | null
+      c_safe?: number | null
+    }
+    data_status?: string
+    _source?: string
+  }
+}
+
+export interface ScreeningZonesResponse {
+  type: 'FeatureCollection'
+  features: ScreeningZoneFeature[]
+  district_id?: string
+  data_status?: DataStatus
+  classification?: DataType
+  _source?: string
+  geometry_source?: string
+  geometry_type?: string
+  srid?: number
+  status_counts: { red: number; yellow: number; green: number }
+  zone_meaning_note?: string
+  note?: string
+}
+
+export interface HistoricalSpatialLayer {
+  type: 'wms'
+  layer: string
+  url: string
+  attribution: string
+}
+
+export interface HistoricalPeriod {
+  period: string
+  label: string
+  availability: 'current' | 'live_overlay' | 'context_only'
+  classification: DataType
+  source?: string
+  spatial_layer: HistoricalSpatialLayer | null
+  note: string
+}
+
+export interface HistoricalPeriodsResponse {
+  region: string
+  status: 'AVAILABLE' | 'UNAVAILABLE'
+  periods: HistoricalPeriod[]
+  reason?: string
+  note?: string
 }

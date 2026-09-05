@@ -31,3 +31,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Phase 4 — local routing artifacts (large binaries / OSM extract)
+/graphhopper/*.jar
+/osm/*.osm
