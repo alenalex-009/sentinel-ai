@@ -121,19 +121,22 @@ deploy-vercel:
   image: node:20-alpine
   needs:
     - build-frontend
+  # Runs from the REPO ROOT (never `cd frontend`): the root vercel.json holds
+  # the SPA rewrites + /api→Render proxy. Deploying from frontend/ would skip
+  # it and ship a broken build. VERCEL_ORG_ID/VERCEL_PROJECT_ID must be set
+  # as CI variables (Project Settings → CI/CD → Variables) to target the
+  # existing project that serves sentinel-ai-rho-rosy.vercel.app.
   script:
     - npm install -g vercel
-    - cd frontend
-    - npm ci
     - |
       vercel deploy \
         --token=$VERCEL_TOKEN \
         --prod \
         --yes \
-        --build-env VITE_API_URL=${VITE_API_URL:-https://sentinel-ai-backend.onrender.com}
+        --cwd "$CI_PROJECT_DIR"
   environment:
     name: production
-    url: https://sentinel-ai-sih.vercel.app
+    url: https://sentinel-ai-rho-rosy.vercel.app
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: on_success

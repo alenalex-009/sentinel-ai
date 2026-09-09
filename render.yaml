@@ -13,7 +13,7 @@ services:
           name: sentinel-ai-db
           property: connectionString
       - key: CORS_ORIGINS
-        value: '["https://sentinel-ai-sih.vercel.app","https://sentinel-ai.vercel.app","http://localhost:5173"]'
+        value: '["https://sentinel-ai-rho-rosy.vercel.app","https://sentinel-ai-sih.vercel.app","https://sentinel-ai.vercel.app","http://localhost:5173"]'
     healthCheckPath: /health
     plan: free
 
