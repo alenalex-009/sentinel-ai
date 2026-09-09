@@ -1,12 +1,19 @@
-"""Road routing API endpoints (Phase 4 — GraphHopper + OpenStreetMap)."""
+"""Road routing API endpoints (Phase 4/5C — OSRM / GraphHopper / Valhalla over OpenStreetMap)."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.services import routing_service
+from app.services import multi_engine_routing
 from app.services.routing_service import region_base_url
 
 router = APIRouter()
+
+
+@router.get("/engines")
+async def routing_engines(region: str = Query("kerala")):
+    """Per-engine availability for the routing selector (OSRM/GraphHopper/Valhalla)."""
+    return await multi_engine_routing.engines_status(region)
 
 
 @router.get("/regions")
@@ -37,14 +44,16 @@ async def routing_regions():
 async def road_route(
     habitation_id: str,
     site_id: str,
+    engine: str = Query("graphhopper", description="osrm | graphhopper | valhalla"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Road distance + travel time (OpenStreetMap + GraphHopper).
+    """Road distance + travel time via the requested engine.
 
-    Unknown ids → 404. GraphHopper unavailable → status UNAVAILABLE with
-    route=null (never a relabelled straight-line distance).
+    Unknown ids → 404. Requested engine unavailable → status UNAVAILABLE with
+    route=null and an explicit reason (never a relabelled straight-line
+    distance, and never a silent other-engine result).
     """
-    result = await routing_service.route_road(db, habitation_id, site_id)
+    result = await multi_engine_routing.route_with_engine(db, habitation_id, site_id, engine)
     if result is None:
         raise HTTPException(
             status_code=404,

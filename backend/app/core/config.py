@@ -28,6 +28,25 @@ class Settings(BaseSettings):
     GRAPHHOPPER_TIMEOUT_S: float = 15.0
     ROUTE_CACHE_TTL_S: int = 300  # in-process route cache (simple, no distributed store)
 
+    # ── Multi-engine routing (Phase 5C) ────────────────────────────────
+    # All engines consume OpenStreetMap data. OSRM pre-bakes edge weights at
+    # import time → sub-ms queries ("fast"); Valhalla costs edges at request
+    # time → runtime-flexible + isochrones ("advanced"); GraphHopper sits
+    # between and is the pre-existing integration. A failed/unconfigured
+    # engine degrades to UNAVAILABLE with an explicit reason — the API never
+    # relabels a fallback as the requested engine's result.
+    OSRM_KERALA_URL: Optional[str] = None          # e.g. http://localhost:5000
+    OSRM_VIZAG_URL: Optional[str] = None
+    OSRM_ASSAM_URL: Optional[str] = None
+    OSRM_PROFILE: str = "driving"                  # osrm-routed profile name
+    OSRM_TIMEOUT_S: float = 8.0
+
+    VALHALLA_KERALA_URL: Optional[str] = None      # e.g. http://localhost:8002
+    VALHALLA_VIZAG_URL: Optional[str] = None
+    VALHALLA_ASSAM_URL: Optional[str] = None
+    VALHALLA_COSTING: str = "auto"                 # auto | bicycle | pedestrian | truck
+    VALHALLA_TIMEOUT_S: float = 12.0
+
     # Risk model weights (configurable baseline — not official government formula)
     RISK_WEIGHT_HAZARD: float = 0.40
     RISK_WEIGHT_EXPOSURE: float = 0.20

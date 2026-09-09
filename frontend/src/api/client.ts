@@ -3,7 +3,10 @@
 
 import type { HistoricalPeriodsResponse, ScreeningZonesResponse } from '../types'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Same-origin by default: dev uses the vite proxy (vite.config.ts),
+// production rewrites /api/* to the Render backend (vercel.json).
+// Set VITE_API_URL to point the browser straight at another origin.
+const BASE_URL = import.meta.env.VITE_API_URL || ''
 
 async function fetchJSON<T>(path: string): Promise<T> {
   const controller = new AbortController()
@@ -96,6 +99,15 @@ export const api = {
   // Scenarios
   runScenario: (params: Record<string, unknown>) =>
     postJSON('/api/v1/scenarios/run', params),
+
+  // Multi-engine road routing (Phase 5C — all engines consume OSM data)
+  getRoutingEngines: (region = 'kerala') =>
+    fetchJSON(`/api/v1/routing/engines?region=${region}`),
+
+  getRoute: (habitationId: string, siteId: string, engine = 'graphhopper') =>
+    fetchJSON(
+      `/api/v1/routing/route/${habitationId}/${siteId}?engine=${engine}`,
+    ),
 
   // Validation (audit trail)
   validateAll: () => fetchJSON('/api/v1/validate/all'),

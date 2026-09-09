@@ -361,6 +361,62 @@ export interface SpatialProximity {
 }
 
 
+// ─── Multi-engine road routing (Phase 5C) ─────────────────────────────
+
+export type RoutingEngine = 'osrm' | 'graphhopper' | 'valhalla'
+
+export interface EngineStatus {
+  tier: 'fast' | 'balanced' | 'advanced'
+  ok: boolean
+  detail: string
+  url: string | null
+}
+
+export interface RoutingEnginesStatus {
+  region: string
+  engines: Record<RoutingEngine, EngineStatus>
+  note: string
+  checked_at: string
+}
+
+export interface RouteInfo {
+  distance_m: number
+  distance_km: number
+  duration_min: number
+  duration_s: number
+  unit: string
+  time_unit: string
+  classification: DataType
+  source: string
+  method: string
+  cache: boolean
+  computed_at: string
+  points_count: number
+}
+
+export interface EngineRouteResult {
+  habitation_id: string
+  site_id: string
+  engine: RoutingEngine
+  engine_tier: 'fast' | 'balanced' | 'advanced'
+  status: 'OK' | 'UNAVAILABLE'
+  route: RouteInfo | null
+  route_geojson: GeoJSON.Feature | null
+  reason?: string
+  classification: DataType
+  source: string
+  method: string
+  region: {
+    key: string | null
+    display: string | null
+    dataset_status: string | null
+    dataset: string | null
+  }
+  note: string
+  computed_at: string
+  _source: string
+}
+
 // ─── Phase 5B — Derived screening zones + historical periods ────────────────
 
 export type ScreeningZoneStatus = 'red' | 'yellow' | 'green'

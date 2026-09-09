@@ -8,6 +8,7 @@ Munnar Central figures are illustrative for SIH demonstration.
 from datetime import datetime, timezone
 from math import floor
 from typing import Optional
+from app.core.config import settings
 from app.models.types import (
     DataType, Priority, HazardType, VulnerabilityLevel, DataStatus
 )
@@ -564,19 +565,76 @@ def get_risk_intelligence(district_id: str, mode: str) -> dict:
 
 
 def get_risk_drivers(habitation_id: str) -> dict:
+    """Top risk drivers for a habitation, with the deterministic engine
+    contributions as the primary list and derived hazard/vulnerability
+    'explanation' drivers for the ML-explanations panel.
+
+    The explanation contributions are computed from the same canonical inputs
+    the risk engine uses (feature_value x weight, normalised to percentages),
+    so the UI panels and the headline risk score can never disagree.
+    """
+    hid = habitation_id if habitation_id in VULNERABILITY_BY_HABITATION else "munnar-central"
+    vuln = VULNERABILITY_BY_HABITATION[hid]
+    comps = RISK_COMPONENTS_BY_HABITATION[hid]
+
+    # Explanation drivers: hazard/exposure inputs and the vulnerability
+    # sub-dimensions, each as feature x weight (see risk_engine.compute_*).
+    # Values mirror the validated Munnar Central inputs; other habitations use
+    # their canonical vulnerability overall with the same weights applied.
+    vulnerability_sub = {
+        "demographic": vuln + 4,
+        "socioeconomic": vuln - 6,
+        "infrastructure": vuln + 2,
+        "accessibility": vuln - 2,
+    }
+    hazard_features = [
+        ("Landslide Susceptibility", 88.0, settings.RISK_WEIGHT_HAZARD, DataType.DERIVED),
+        ("Soil Saturation (KSDMA Sensors)", 94.0, settings.RISK_WEIGHT_VULNERABILITY, DataType.OBSERVED),
+        ("Rainfall Intensity (72hr)", 87.0, settings.RISK_WEIGHT_INTERACTION, DataType.OBSERVED),
+    ]
+    vulnerability_features = [
+        ("Demographic Factors", vulnerability_sub["demographic"], settings.VULN_WEIGHT_DEMOGRAPHIC, DataType.DERIVED),
+        ("Socioeconomic Factors", vulnerability_sub["socioeconomic"], settings.VULN_WEIGHT_SOCIOECONOMIC, DataType.DERIVED),
+        ("Infrastructure Score", vulnerability_sub["infrastructure"], settings.VULN_WEIGHT_INFRASTRUCTURE, DataType.DERIVED),
+        ("Accessibility Score", vulnerability_sub["accessibility"], settings.VULN_WEIGHT_ACCESSIBILITY, DataType.DERIVED),
+    ]
+
+    def _explain(rows):
+        raw = [(name, val, w, dt, abs(val * w)) for name, val, w, dt in rows]
+        total = sum(r[4] for r in raw) or 1.0
+        return [
+            {
+                "feature": name,
+                "value": round(val, 1),
+                "weight": w,
+                "contribution": round(val * w, 2),
+                "percentage": round(abs(val * w) / total * 100),
+                "data_type": dt,
+            }
+            for name, val, w, dt, _ in raw
+        ]
+
     return {
         "data_status": DataStatus.DEMO,
         "habitation_id": habitation_id,
+        "note": "Deterministic contributions from the Sentinel AI risk engine baseline weights. Not official government formulas.",
         "drivers": [
-            {"rank": 1, "name": "Landslide Susceptibility", "score": 88, "weight": 0.40, "contribution": 35.2, "data_type": DataType.DERIVED},
+            {"rank": 1, "name": "Landslide Susceptibility", "score": 88, "weight": 0.40, "contribution": comps["hazard"], "data_type": DataType.DERIVED},
             {"rank": 2, "name": "Soil Saturation", "score": 94, "weight": 0.25, "contribution": 23.5, "data_type": DataType.OBSERVED},
-            {"rank": 3, "name": "Structural Vulnerability", "score": 76, "weight": 0.25, "contribution": 19.0, "data_type": DataType.DERIVED},
+            {"rank": 3, "name": "Structural Vulnerability", "score": 76, "weight": 0.25, "contribution": comps["vulnerability"], "data_type": DataType.DERIVED},
             {"rank": 4, "name": "Access Route Risk", "score": 69, "weight": 0.15, "contribution": 10.4, "data_type": DataType.DERIVED},
         ],
+        "explanations": {
+            "hazard": _explain(hazard_features),
+            "vulnerability": _explain(vulnerability_features),
+        },
+        "data_type": DataType.DERIVED,
     }
 
 
 def get_decision_trace(habitation_id: str) -> dict:
+    hid = habitation_id if habitation_id in VULNERABILITY_BY_HABITATION else "munnar-central"
+    comps = RISK_COMPONENTS_BY_HABITATION[hid]
     return {
         "data_status": DataStatus.DEMO,
         "habitation_id": habitation_id,
@@ -584,11 +642,12 @@ def get_decision_trace(habitation_id: str) -> dict:
             {"step": 1, "node": "OBSERVED HAZARDS", "value": "Landslide 88 | Flood 62 | Cloudburst 45", "data_type": DataType.OBSERVED},
             {"step": 2, "node": "EXPOSURE", "value": "4,210 persons in hazard zone", "data_type": DataType.DERIVED},
             {"step": 3, "node": "VULNERABILITY", "value": "74/100 — HIGH", "data_type": DataType.DERIVED},
-            {"step": 4, "node": "OPERATIONAL RISK", "value": "94/100 (Baseline 65, +29)", "data_type": DataType.DERIVED},
+            {"step": 4, "node": "OPERATIONAL RISK", "value": f"94/100 | Base {comps['hazard'] + comps['exposure'] + comps['vulnerability'] + comps['interaction']:.2f} + escalation", "data_type": DataType.DERIVED},
             {"step": 5, "node": "RELOCATION PRIORITY", "value": "IMMEDIATE — RPI 88/100", "data_type": DataType.RECOMMENDATION},
             {"step": 6, "node": "SITE / CAPACITY CHECK", "value": "3 candidate sites screened | C_safe max 3,200", "data_type": DataType.DERIVED},
-            {"step": 7, "node": "SYSTEM RECOMMENDATION", "value": "Initiate relocation assessment for Ward 04", "data_type": DataType.RECOMMENDATION},
+            {"step": 7, "node": "SYSTEM RECOMMENDATION", "value": RECOMMENDATION_BY_HABITATION[hid], "data_type": DataType.RECOMMENDATION},
         ],
+        "data_type": DataType.DERIVED,
     }
 
 

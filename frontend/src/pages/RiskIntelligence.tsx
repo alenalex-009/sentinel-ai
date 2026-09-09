@@ -10,7 +10,9 @@ import {
   DEMO_HABITATIONS,
   DEMO_RISK_INTELLIGENCE,
 } from '../data/idukki-seed'
-import type { HabitationListItem } from '../types'
+import type { HabitationListItem, RiskIntelligencePanel } from '../types'
+import { api } from '../api/client'
+import { useApiWithFallback } from '../hooks/useApiWithFallback'
 import clsx from 'clsx'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -47,7 +49,23 @@ export function RiskIntelligence() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showHazard, setShowHazard] = useState(true)
 
-  const ri = DEMO_RISK_INTELLIGENCE
+  // Live data: risk intelligence panel + habitation list (API-first, the
+  // labelled demo seed is the automatic fallback).
+  const { data: apiRi, source: riSource } = useApiWithFallback<RiskIntelligencePanel>(
+    () => api.getRiskIntelligence('idukki', mode) as Promise<RiskIntelligencePanel>,
+    DEMO_RISK_INTELLIGENCE as unknown as RiskIntelligencePanel,
+    [mode],
+  )
+  const { data: apiHabitations, source: habSource } = useApiWithFallback<{
+    habitations: HabitationListItem[]
+  }>(
+    () => api.getHabitations('idukki') as Promise<{ habitations: HabitationListItem[] }>,
+    { habitations: DEMO_HABITATIONS as unknown as HabitationListItem[] },
+    [],
+  )
+
+  const ri = apiRi ?? (DEMO_RISK_INTELLIGENCE as unknown as RiskIntelligencePanel)
+  const habitations: HabitationListItem[] = apiHabitations?.habitations ?? DEMO_HABITATIONS
 
   const distChartData = [
     { name: 'Critical', value: ri.risk_distribution.critical, key: 'critical' },
@@ -56,13 +74,13 @@ export function RiskIntelligence() {
     { name: 'Low', value: ri.risk_distribution.low, key: 'low' },
   ]
 
-  const sorted = [...DEMO_HABITATIONS].sort((a, b) => {
+  const sorted = [...habitations].sort((a, b) => {
     if (mode === 'change') return Math.abs(b.risk_change) - Math.abs(a.risk_change)
     if (mode === 'baseline') return (b.risk_score - b.risk_change) - (a.risk_score - a.risk_change)
     return b.risk_score - a.risk_score
   })
 
-  const selected = selectedId ? DEMO_HABITATIONS.find(h => h.id === selectedId) : null
+  const selected = selectedId ? habitations.find(h => h.id === selectedId) : null
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -168,7 +186,7 @@ export function RiskIntelligence() {
       {/* CENTER — GIS workspace */}
       <div className="relative flex-1">
         <MapContainer
-          habitations={DEMO_HABITATIONS}
+          habitations={habitations}
           selectedHabitationId={selectedId}
           onHabitationSelect={setSelectedId}
           showHazardLayer={showHazard}
@@ -232,7 +250,13 @@ export function RiskIntelligence() {
       <div className="flex w-64 flex-shrink-0 flex-col gap-3 overflow-y-auto border-l border-slate-800 bg-slate-950 p-3">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Risk Intelligence</h2>
-          <FreshnessBadge status="DEMO" />
+          <FreshnessBadge status={riSource === 'api' ? 'DEMO' : 'DEMO'} />
+        </div>
+
+        {/* Provenance line — panel + list sources differ per endpoint */}
+        <div className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5 text-2xs text-slate-500">
+          Panel: {riSource === 'api' ? '● API engine' : '● demo seed'} ·
+          List: {habSource === 'api' ? '● API' : '● seed'}
         </div>
 
         {/* Distribution chart */}
@@ -296,7 +320,7 @@ export function RiskIntelligence() {
               <div key={s.habitation} className="flex items-center justify-between">
                 <button
                   onClick={() => {
-                    const h = DEMO_HABITATIONS.find(x => x.name === s.habitation)
+                    const h = habitations.find(x => x.name === s.habitation)
                     if (h) setSelectedId(h.id)
                   }}
                   className="text-xs text-slate-300 hover:text-blue-400 text-left"

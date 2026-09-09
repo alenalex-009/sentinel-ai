@@ -23,7 +23,6 @@
     border-radius: 4px !important;
   }
 
-  /* Ensure borders print */
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
@@ -35,74 +34,257 @@
     box-sizing: border-box;
   }
 
+  html {
+    color-scheme: dark;
+  }
+
   html, body, #root {
     height: 100%;
     margin: 0;
     padding: 0;
-    background-color: #0a0f1a;
-    color: #cbd5e1;
+    background-color: #070b14;
+    color: #e8eef6;
     font-family: 'Inter', system-ui, sans-serif;
-    font-size: 14px;
+    font-size: 15px;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: rgba(245,166,35,0.28);
+    color: #f5a623;
   }
 
   ::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #0f172a;
+    background: #0a0f19;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #334155;
-    border-radius: 2px;
+    background: #1f2c42;
+    border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+    background: #2c3c58;
+  }
+
+  a:focus-visible {
+    outline: 2px solid #f5a623;
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  button:focus-visible {
+    outline: 2px solid #f5a623;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  input:focus-visible {
+    outline: 2px solid #f5a623;
+    outline-offset: 1px;
   }
 }
 
 @layer components {
+  /* ── Core panel shell ───────────────────────────────────────────── */
+  .panel {
+    background-color: #0e1626;
+    border: 1px solid #1f2c42;
+  }
+
+  .panel-raised {
+    background-color: #131d2f;
+    border: 1px solid #1f2c42;
+    box-shadow: 0 1px 0 #0a0f19 inset, 0 8px 24px -12px rgba(0,0,0,0.65);
+  }
+
+  .panel-solid {
+    background-color: #131d2f;
+    border: 1px solid #1f2c42;
+  }
+
+  .panel-tint-flood {
+    background-color: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.22);
+  }
+
+  .panel-tint-landslide {
+    background-color: rgba(240,106,42,0.06);
+    border: 1px solid rgba(240,106,42,0.22);
+  }
+
+  .panel-tint-critical {
+    background-color: rgba(239,90,79,0.06);
+    border: 1px solid rgba(239,90,79,0.22);
+  }
+
+  .panel-tint-amber {
+    background-color: rgba(245,166,35,0.07);
+    border: 1px solid rgba(245,166,35,0.26);
+  }
+
+  /* ── Typography tokens ─────────────────────────────────────────── */
+  .font-display {
+    font-family: 'Big Shoulders Display', sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  .font-data {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .text-display-title {
+    font-family: 'Big Shoulders Display', sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    color: #e8eef6;
+    line-height: 1.05;
+  }
+
+  .text-eye {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #8da0b8;
+  }
+
+  .text-eye-amber {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #f5a623;
+  }
+
+  .text-muted {
+    color: #8da0b8;
+  }
+
+  .text-faint {
+    color: #5a6f88;
+  }
+
+  .text-kicker {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8da0b8;
+  }
+
+  .text-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: #e8eef6;
+    letter-spacing: -0.01em;
+  }
+
+  .text-number-amber {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: #f5a623;
+    letter-spacing: -0.01em;
+  }
+
+  .text-number-red {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: #ef5a4f;
+    letter-spacing: -0.01em;
+  }
+
+  .text-number-muted {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    color: #8da0b8;
+  }
+
+  /* ── MapLibre overrides (match the new system) ─────────────────── */
   .maplibregl-map {
     font-family: 'Inter', system-ui, sans-serif !important;
   }
 
   .maplibregl-popup-content {
-    background: #1e293b !important;
-    border: 1px solid #334155 !important;
-    border-radius: 6px !important;
+    background: #131d2f !important;
+    border: 1px solid #1f2c42 !important;
+    border-radius: 8px !important;
     padding: 0 !important;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.5) !important;
+    box-shadow: 0 8px 32px -10px rgba(0,0,0,0.7), 0 0 0 1px rgba(245,166,35,0.06) !important;
+  }
+
+  .maplibregl-popup-close-button {
+    color: #8da0b8 !important;
+    font-size: 18px !important;
+    padding: 4px 6px !important;
+    transition: color 0.12s ease;
+  }
+
+  .maplibregl-popup-close-button:hover {
+    color: #f5a623 !important;
+    background: transparent !important;
   }
 
   .maplibregl-popup-tip {
-    border-top-color: #334155 !important;
+    border-top-color: #1f2c42 !important;
   }
 
   .maplibregl-ctrl-group {
-    background: #1e293b !important;
-    border: 1px solid #334155 !important;
+    background: #131d2f !important;
+    border: 1px solid #1f2c42 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 24px -12px rgba(0,0,0,0.6) !important;
   }
 
   .maplibregl-ctrl-group button {
-    background-color: #1e293b !important;
-    color: #94a3b8 !important;
+    background-color: transparent !important;
+    color: #8da0b8 !important;
+    border-radius: 6px !important;
+    transition: color 0.12s ease, background-color 0.12s ease;
   }
 
   .maplibregl-ctrl-group button:hover {
-    background-color: #334155 !important;
+    background-color: rgba(245,166,35,0.12) !important;
+    color: #f5a623 !important;
+  }
+
+  .maplibregl-ctrl-group button span {
+    color: #8da0b8 !important;
   }
 
   .maplibregl-ctrl-attrib {
-    background: rgba(10,15,26,0.8) !important;
-    color: #475569 !important;
+    background: rgba(7,11,20,0.82) !important;
+    color: #5a6f88 !important;
     font-size: 10px !important;
+    border-radius: 6px !important;
+    padding: 2px 6px !important;
   }
 
   .maplibregl-ctrl-attrib a {
-    color: #64748b !important;
+    color: #8da0b8 !important;
+  }
+
+  /* ── Global nav active indicator (CSS-only; avoids JSX isActive refs) ── */
+  .nav-item {
+    position: relative;
+  }
+
+  .nav-item-active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 1.5rem;
+    width: 2px;
+    border-radius: 1px;
+    background-color: #f5a623;
+    box-shadow: 0 0 6px rgba(245,166,35,0.5);
   }
 }

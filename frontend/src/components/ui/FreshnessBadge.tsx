@@ -7,30 +7,39 @@ interface FreshnessBadgeProps {
   source?: string
 }
 
-const STATUS_STYLES: Record<DataStatus, string> = {
-  LIVE: 'text-green-400 border-green-500/30',
-  DEMO: 'text-amber-400 border-amber-500/30',
-  SIMULATION: 'text-cyan-400 border-cyan-500/30',
-  UNAVAILABLE: 'text-red-400 border-red-500/30',
-  STALE: 'text-orange-400 border-orange-500/30',
+const STATUS_CLASS: Record<DataStatus, string> = {
+  LIVE: 'border-green-500/30 text-green-400',
+  DEMO: 'border-amber-500/30 text-amber-400',
+  SIMULATION: 'border-cyan-500/30 text-cyan-400',
+  UNAVAILABLE: 'border-red-500/30 text-red-400',
+  STALE: 'border-orange-500/30 text-orange-400',
+}
+
+const DOT_CLASS = {
+  LIVE: 'bg-green-400 animate-pulse',
+  DEMO: 'bg-amber-400',
+  SIMULATION: 'bg-cyan-400',
+  UNAVAILABLE: 'bg-red-400',
+  STALE: 'bg-orange-400',
 }
 
 export function FreshnessBadge({ status, ageHours, source }: FreshnessBadgeProps) {
   return (
-    <span className={clsx(
-      'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-2xs font-mono font-medium uppercase tracking-wider',
-      STATUS_STYLES[status]
-    )}>
-      <span className={clsx(
-        'h-1.5 w-1.5 rounded-full',
-        status === 'LIVE' ? 'bg-green-400 animate-pulse' :
-        status === 'DEMO' ? 'bg-amber-400' :
-        status === 'SIMULATION' ? 'bg-cyan-400' :
-        'bg-red-400'
-      )} />
-      {status}
-      {ageHours != null && <span className="opacity-60">+{ageHours}h</span>}
-      {source && <span className="opacity-50 normal-case font-sans">{source}</span>}
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-2xs font-mono font-medium uppercase tracking-wider',
+        STATUS_CLASS[status],
+      )
+    }
+    >
+      <span className={clsx('h-1.5 w-1.5 rounded-full', DOT_CLASS[status])} />
+      <span className="text-amber-400/90">{status === 'DEMO' ? 'DEMO' : status}</span>
+      {ageHours != null && (
+        <span className="opacity-60 text-faint">+{ageHours}h</span>
+      )}
+      {source && (
+        <span className="opacity-50 normal-case font-sans text-faint">{source}</span>
+      )}
     </span>
   )
 }

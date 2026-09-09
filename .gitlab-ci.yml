@@ -22,6 +22,9 @@ secret_detection:
   stage: secret-detection
 
 # ─── Backend model validation test ───────────────────────────────────────────────
+# Runs scripts/validate_models.py: engine invariants (vulnerability, risk,
+# Munnar audit vs seed, c_safe=3200 bottleneck=water, suitability) must hold
+# or the pipeline fails.
 test-backend:
   stage: test
   image: python:3.11-slim
@@ -31,38 +34,63 @@ test-backend:
       - backend/.pip-cache/
   script:
     - cd backend
-    - pip install --cache-dir .pip-cache fastapi uvicorn pydantic pydantic-settings ortools httpx
+    - pip install --cache-dir .pip-cache pydantic pydantic-settings
+    - python scripts/validate_models.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_MERGE_REQUEST_ID
+
+# ─── Frontend E2E smoke tests (Playwright) ───────────────────────────────────────
+# Renders every route against the REAL backend: starts FastAPI, lets the
+# Playwright webServer config reuse it (plus vite), then runs the suite.
+# Catches the class of regression where a page compiles but crashes at render
+# time (the redesign once shipped 64 JSX syntax errors that only surfaced
+# when a human opened the site).
+test-frontend-e2e:
+  stage: test
+  # Official Playwright image: Chromium + system deps + Node preinstalled.
+  # Keep this tag in sync with @playwright/test in frontend/package.json.
+  image: mcr.microsoft.com/playwright:v1.63.0-jammy
+  # Own cache key: this job runs on Debian (glibc) while build-frontend uses
+  # alpine (musl) — sharing node_modules across them breaks esbuild's
+  # platform-specific binaries.
+  cache:
+    key: frontend-npm-e2e-$CI_COMMIT_REF_SLUG
+    paths:
+      - frontend/node_modules/
+  script:
+    - cd frontend
+    - npm ci
+    # Backend deps (demo endpoints import geopandas/shapely/ortools), then
+    # serve on the origin the app's API client defaults to (localhost:8000,
+    # already in CORS_ORIGINS). No Postgres in CI — the API degrades to demo
+    # mode and /health still answers, which is what the app expects.
+    - pip3 install --quiet -r ../backend/requirements.txt || pip3 install --quiet --break-system-packages -r ../backend/requirements.txt
+    - (cd ../backend && python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/uvicorn.log 2>&1 &)
+    # Wait for the backend health endpoint (degraded DB is fine; HTTP must
+    # answer). python3 is installed above — no curl dependency in this image.
     - |
-      python -c "
-from app.services.risk_engine import compute_risk, compute_vulnerability, compute_rpi
-from app.services.risk_validation import validate_munnar_central, validate_site_a_capacity, validate_suitability_site_a
-
-# Validate vulnerability
-v = compute_vulnerability(78, 71, 76, 69)
-assert abs(v - 73.85) < 0.1, f'Vulnerability mismatch: {v}'
-print(f'[PASS] Vulnerability: {v:.2f} (expected ~73.85)')
-
-# Validate risk
-r = compute_risk(88, 84, v)
-print(f'[PASS] Risk: {r:.2f}')
-
-# Validate full audit
-audit = validate_munnar_central()
-print(f'[PASS] Risk audit: vuln={audit[\"computed\"][\"vulnerability\"]}, risk={audit[\"computed\"][\"risk\"]}')
-
-# Validate capacity
-cap = validate_site_a_capacity()
-assert cap['c_safe'] == 3200, f'C_safe mismatch: {cap[\"c_safe\"]}'
-assert cap['bottleneck'] == 'water', f'Bottleneck mismatch: {cap[\"bottleneck\"]}'
-print(f'[PASS] Capacity: c_safe={cap[\"c_safe\"]}, bottleneck={cap[\"bottleneck\"]}')
-
-# Validate suitability
-suit = validate_suitability_site_a()
-assert suit['match'], f'Suitability mismatch: computed={suit[\"computed_suitability\"]}, seed={suit[\"seed_suitability\"]}'
-print(f'[PASS] Suitability: {suit[\"computed_suitability\"]}')
-
-print('All model validations PASSED')
-"
+      python3 - <<'EOF'
+      import sys, time, urllib.request
+      for attempt in range(1, 31):
+          try:
+              with urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3) as r:
+                  print('Backend healthy (attempt', attempt, ')', r.read().decode())
+                  sys.exit(0)
+          except Exception as exc:
+              if attempt == 30:
+                  print('Backend failed to start:', exc)
+                  sys.exit(1)
+              time.sleep(1)
+      EOF
+    # Run the suite — its webServer config reuses the running servers.
+    - npx playwright test
+  artifacts:
+    when: on_failure
+    paths:
+      - frontend/test-results/
+      - frontend/playwright-report/
+    expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_MERGE_REQUEST_ID

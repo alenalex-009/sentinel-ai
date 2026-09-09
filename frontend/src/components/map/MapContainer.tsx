@@ -16,6 +16,8 @@ function riskColor(score: number): string {
   return "#22c55e";
 }
 
+const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
 interface MapContainerProps {
   habitations?: HabitationListItem[];
   selectedHabitationId?: string | null;
@@ -31,6 +33,11 @@ interface MapContainerProps {
    *  Risk Intelligence) set this so one click never shows two overlapping
    *  popups with the same content. */
   clickPopup?: boolean;
+  /** Extra GeoJSON features to draw on top (e.g. road-network routes from
+   *  OSRM/GraphHopper/Valhalla). Lines use cyan; areas are filled amber. */
+  routeFeature?: GeoJSON.Feature | null;
+  /** Label for the route legend chip (e.g. "OSRM · 12.4 km · 18 min"). */
+  routeLabel?: string | null;
   className?: string;
 }
 
@@ -40,8 +47,10 @@ export function MapContainer({
   onHabitationSelect,
   showHazardLayer = false,
   habitationGeoJSON = null,
-  pointsSourceLabel = "\u25CF DEMO \u2014 Habitation points are illustrative",
+  pointsSourceLabel = "\u25CF DEMO — Habitation points are illustrative",
   clickPopup = true,
+  routeFeature = null,
+  routeLabel = null,
   className = "",
 }: MapContainerProps) {
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -172,6 +181,29 @@ export function MapContainer({
       // NOTE: no district/habitation boundary polygons are drawn. The seed
       // dataset contains points only; no real boundary geometry exists yet, so
       // no approximate/decorative boundary layer is rendered.
+
+      // --- Route overlay (multi-engine routing, Phase 5C) ---
+      map.addSource("route", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "route-casing",
+        type: "line",
+        source: "route",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#0a0f1a", "line-width": 7, "line-opacity": 0.9 },
+      });
+      map.addLayer({
+        id: "route-line",
+        type: "line",
+        source: "route",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#00b4d8",
+          "line-width": 4,
+          "line-opacity": 0.95,
+        },
+      });
 
       // --- Habitation points (seed props, or PostGIS GeoJSON when provided) ---
       map.addSource("habitations", { type: "geojson", data: geojsonData });
@@ -355,6 +387,34 @@ export function MapContainer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [habitationGeoJSON, habitations]);
 
+  // Route overlay: swap geometry when a new route arrives, fit bounds to it.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+
+    if (routeFeature) {
+      source.setData({ type: "FeatureCollection", features: [routeFeature] });
+      const geom = routeFeature.geometry as GeoJSON.LineString;
+      if (geom?.coordinates?.length > 1) {
+        const bounds = geom.coordinates.reduce(
+          (b, c) => [
+            Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+            Math.max(b[2], c[2]), Math.max(b[3], c[3]),
+          ],
+          [Infinity, Infinity, -Infinity, -Infinity] as [number, number, number, number],
+        );
+        map.fitBounds(
+          [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
+          { padding: 60, duration: 900, maxZoom: 14 },
+        );
+      }
+    } else {
+      source.setData(EMPTY_FC);
+    }
+  }, [routeFeature]);
+
   // Toggle hazard layer
   useEffect(() => {
     const map = mapRef.current;
@@ -375,6 +435,12 @@ export function MapContainer({
   return (
     <div className={`relative ${className}`}>
       <div ref={containerRef} className="h-full w-full" />
+      {/* Route legend chip */}
+      {routeLabel && (
+        <div className="absolute right-2 top-2 rounded border border-cyan-500/40 bg-slate-950/90 px-2 py-1 text-2xs font-semibold text-cyan-300">
+          ⤳ {routeLabel}
+        </div>
+      )}
       {/* Map attribution overlay */}
       <div className="absolute bottom-6 left-2 flex flex-col gap-1">
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-slate-600">

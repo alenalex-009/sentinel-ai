@@ -66,6 +66,72 @@ services:
       - ghdata_assam:/data/cache
     restart: unless-stopped
 
+  # ── Multi-engine routing (Phase 5C) ─────────────────────────────────────
+  # OSRM (fast) and Valhalla (advanced) join GraphHopper (balanced) as routing
+  # engines over the SAME OpenStreetMap extract (kerala.osm). The extract is
+  # Overpass XML, so a one-shot osmium job converts it to PBF first; both
+  # engines pre-process from that PBF into their own named volumes.
+  osm-convert:
+    build:
+      context: ./docker/osmium-converter
+      dockerfile: Dockerfile
+    container_name: sentinel_osm_convert
+    volumes:
+      - ./osm:/data/osm:ro
+      - osrpbf:/data/pbf
+    restart: "no"
+
+  osrm-prep:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: sentinel_osrm_prep
+    volumes:
+      # rw: osrm-extract/partition/customize write .osrm.* artifacts beside the PBF
+      - osrpbf:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "osrm-extract -p /opt/car.lua /data/kerala.osm.pbf &&
+       osrm-partition /data/kerala.osm.pbf &&
+       osrm-customize /data/kerala.osm.pbf &&
+       echo OSRM preprocessing done"
+    depends_on:
+      osm-convert:
+        condition: service_completed_successfully
+    restart: "no"
+
+  osrm-kerala:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    container_name: sentinel_osrm
+    ports:
+      - '5000:5000'
+    volumes:
+      - osrpbf:/data:ro
+    command: osrm-routed --algorithm mld /data/kerala.osm.pbf
+    depends_on:
+      osrm-prep:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  valhalla-kerala:
+    # Scripted image: auto-builds tiles from PBF(s) mounted in /custom_files,
+    # then serves on 8002. Rebuilds only when the PBF hash changes.
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    container_name: sentinel_valhalla
+    ports:
+      - '8002:8002'
+    environment:
+      server_threads: '2'
+      tileset_name: kerala
+      use_tiles_ignore_pbf: 'False'
+      force_rebuild: 'False'
+    volumes:
+      # rw: the scripted image writes valhalla.json, tile tar + hashes here
+      - osrpbf:/custom_files
+      - valhalla_tiles:/data/valhalla
+    depends_on:
+      osm-convert:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -77,6 +143,8 @@ services:
       GRAPHHOPPER_KERALA_URL: http://graphhopper-kerala:8989
       GRAPHHOPPER_VIZAG_URL: http://graphhopper-vizag:8989
       GRAPHHOPPER_ASSAM_URL: http://graphhopper-assam:8989
+      OSRM_KERALA_URL: http://osrm-kerala:5000
+      VALHALLA_KERALA_URL: http://valhalla-kerala:8002
     ports:
       - '8000:8000'
     depends_on:
@@ -107,3 +175,5 @@ volumes:
   ghdata_kerala:
   ghdata_vizag:
   ghdata_assam:
+  osrpbf:
+  valhalla_tiles:

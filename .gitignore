@@ -5,6 +5,7 @@
 
 # Python
 .venv/
+.venv311/
 venv/
 __pycache__/
 *.py[cod]
@@ -31,6 +32,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Agent/session tooling (machine-local, never ship)
+.agents/
+.claude/
+.freebuff/
+skills-lock.json
+
+# TS incremental build cache
+*.tsbuildinfo
 
 # Phase 4 — local routing artifacts (large binaries / OSM extract)
 /graphhopper/*.jar

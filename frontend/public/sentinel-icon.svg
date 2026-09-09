@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Sentinel AI favicon: amber radar sweep over a dark command-console tile -->
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0f172a" stroke="#f5a623" stroke-opacity="0.45" stroke-width="1.5"/>
+  <!-- concentric range rings -->
+  <circle cx="16" cy="16" r="10.5" fill="none" stroke="#8da0b8" stroke-opacity="0.35" stroke-width="1"/>
+  <circle cx="16" cy="16" r="6.5" fill="none" stroke="#8da0b8" stroke-opacity="0.45" stroke-width="1"/>
+  <circle cx="16" cy="16" r="2.4" fill="#f5a623"/>
+  <!-- radar sweep -->
+  <path d="M16 16 L16 4.5 A11.5 11.5 0 0 1 26.2 10.2 Z" fill="#f5a623" fill-opacity="0.30"/>
+  <line x1="16" y1="16" x2="26.2" y2="10.2" stroke="#f5a623" stroke-width="1.6" stroke-linecap="round"/>
+  <!-- tracked blip -->
+  <circle cx="21.6" cy="21.2" r="1.7" fill="#ef5a4f" stroke="#0f172a" stroke-width="0.6"/>
+</svg>
