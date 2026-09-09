@@ -42,7 +42,7 @@ const formatTimeAgo = (timestamp: string): string => {
 class HabitationInvestigationService {
   private static instance: HabitationInvestigationService;
   private redZoneService: RedZoneDetectionService;
-  private refreshInterval: NodeJS.Timeout | null = null;
+  private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   private constructor() {
     this.redZoneService = RedZoneDetectionService.getInstance();
