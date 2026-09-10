@@ -4,7 +4,13 @@
 import type {
   CurrentHazardsResponse,
   CurrentRiskResponse,
+  HazardAwareRouteResponse,
   HistoricalPeriodsResponse,
+  IsochronesResponse,
+  MatrixResponse,
+  OSMFeatureCategory,
+  OSMLayerResponse,
+  OSMStatusResponse,
   RiskTimelineResponse,
   SafeZoneDiscoveryResponse,
   SafeZonesResponse,
@@ -204,4 +210,70 @@ export const api = {
     fetchJSON(
       `/api/v1/spatial/safe-zones?district_id=${districtId}${refresh ? '&refresh=1' : ''}`,
     ),
+
+  // OpenStreetMap layers (Phase 6 — live Overpass with cache/PostGIS tiers)
+  getOsmLayer: (
+    category: OSMFeatureCategory,
+    bbox: string,
+    refresh = false,
+  ): Promise<OSMLayerResponse> =>
+    fetchJSON(
+      `/api/v1/osm/${category}?bbox=${encodeURIComponent(bbox)}${refresh ? '&refresh=1' : ''}`,
+    ),
+
+  getOsmFeatures: (bbox: string, refresh = false): Promise<OSMLayerResponse> =>
+    fetchJSON(
+      `/api/v1/osm/features?bbox=${encodeURIComponent(bbox)}${refresh ? '&refresh=1' : ''}`,
+    ),
+
+  getOsmStatus: (): Promise<OSMStatusResponse> => fetchJSON('/api/v1/osm/status'),
+
+  // Phase 6 routing — hazard-aware + alternatives / isochrones / matrix
+  postHazardAwareRoute: (
+    habitationId: string,
+    siteId: string,
+    engine = 'graphhopper',
+    avoidHazards = true,
+  ): Promise<HazardAwareRouteResponse> =>
+    postJSON('/api/v1/routing/hazard-aware', {
+      habitation_id: habitationId,
+      site_id: siteId,
+      engine,
+      avoid_hazards: avoidHazards,
+    }),
+
+  postRoutingAlternatives: (
+    habitationId: string,
+    siteId: string,
+    engine = 'graphhopper',
+    maxAlternatives = 3,
+  ) =>
+    postJSON('/api/v1/routing/alternatives', {
+      habitation_id: habitationId,
+      site_id: siteId,
+      engine,
+      max_alternatives: maxAlternatives,
+    }),
+
+  postIsochrones: (
+    region: string,
+    lat: number,
+    lon: number,
+    contoursMin: number[],
+  ): Promise<IsochronesResponse> =>
+    postJSON('/api/v1/routing/isochrones', {
+      region,
+      lat,
+      lon,
+      contours_min: contoursMin,
+    }),
+
+  postRoutingMatrix: (
+    habitationIds: string[],
+    siteIds: string[],
+  ): Promise<MatrixResponse> =>
+    postJSON('/api/v1/routing/matrix', {
+      habitation_ids: habitationIds,
+      site_ids: siteIds,
+    }),
 }

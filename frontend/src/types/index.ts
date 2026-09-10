@@ -736,3 +736,121 @@ export interface SafeZonesResponse {
   status_counts: { green: number; yellow: number; red: number }
   note?: string
 }
+
+// ── OpenStreetMap layers (Phase 6 — Overpass provider) ──────────────────────
+export type OSMFeatureCategory = 'roads' | 'buildings' | 'facilities' | 'water'
+
+export interface OSMFeatureProperties {
+  osm_type: string
+  osm_id: number
+  name?: string | null
+  kind?: string
+  category?: OSMFeatureCategory
+  highway?: string
+  building?: string
+  amenity?: string
+  [key: string]: unknown
+}
+
+export interface OSMFeature {
+  type: 'Feature'
+  geometry: GeoJSON.Geometry
+  properties: OSMFeatureProperties
+}
+
+export interface OSMLayerResponse {
+  type: 'FeatureCollection'
+  features: OSMFeature[]
+  category?: OSMFeatureCategory
+  bbox?: number[]
+  source?: string
+  fetched_at?: string
+  cache?: boolean
+  data_status?: DataStatus
+  count?: number
+  persisted?: boolean
+  region?: { key?: string | null; display?: string | null }
+  feature_collection?: { type: 'FeatureCollection'; features: OSMFeature[] }
+  empty_reason?: string
+}
+
+export interface OSMStatusResponse {
+  provider: string
+  url: string
+  reachable: boolean
+  detail: string
+  cache_entries: number
+  cache_ttl_s: number
+  checked_at: string
+}
+
+// ── Hazard-aware routing + alternatives / isochrones / matrix (Phase 6) ─────
+export interface HazardExposure {
+  event_id: string
+  hazard_type: string
+  severity_level: string
+  severity_score: number
+  buffer_radius_km: number
+  inside_km: number
+  fraction: number
+  weight: number
+  contribution: number
+}
+
+export interface HazardAnalysis {
+  route_risk_score: number | null
+  risk_label: string | null
+  method: string
+  exposures: HazardExposure[]
+  events_evaluated?: number
+  hazard_empty?: boolean
+  reason?: string
+}
+
+export interface HazardAwareRouteResponse {
+  habitation_id: string
+  site_id: string
+  engine: string
+  engine_tier: string
+  status: 'OK' | 'UNAVAILABLE'
+  route: {
+    distance_km?: number
+    distance_m?: number
+    duration_min?: number
+    source?: string
+    [key: string]: unknown
+  } | null
+  route_geojson: GeoJSON.Feature | null
+  hazard_analysis: HazardAnalysis
+  avoidance?: {
+    enabled: boolean
+    avoided: boolean
+    note: string
+    candidates_count?: number
+  }
+  region?: Record<string, unknown>
+  note?: string
+  computed_at?: string
+  reason?: string
+}
+
+export interface IsochronesResponse {
+  data_status: DataStatus
+  reason?: string
+  source?: string
+  region?: string
+  computed_at?: string
+  feature_collection: GeoJSON.FeatureCollection
+}
+
+export interface MatrixResponse {
+  data_status: DataStatus
+  reason?: string
+  source?: string
+  region?: string
+  rows: string[]
+  columns: string[]
+  distances_km?: number[][]
+  durations_min?: number[][]
+  computed_at?: string
+}

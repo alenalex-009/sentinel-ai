@@ -61,6 +61,24 @@ class Settings(BaseSettings):
     VALHALLA_COSTING: str = "auto"                 # auto | bicycle | pedestrian | truck
     VALHALLA_TIMEOUT_S: float = 12.0
 
+    # ── OSM vector data (Overpass API) ────────────────────────────────────
+    # Sentinel AI pulls OSM feature layers (roads / buildings / facilities /
+    # water) directly from the public Overpass API. Results are normalized to
+    # GeoJSON with full provenance (source, fetched_at, cache state) and served
+    # on /api/v1/osm/*. The OSM basemap TILES (CARTO rasters) are a separate
+    # concern from Overpass FEATURE data — both keep their own attribution.
+    OSM_OVERPASS_URL: str = "https://overpass-api.de/api/interpreter"
+    OSM_OVERPASS_FALLBACK_URLS: str = (  # tried in order when the primary 5xx/hangs
+        "https://overpass.kumi.systems/api/interpreter"
+    )
+    OSM_USER_AGENT: str = "SentinelAI-SIH26191/0.4 (+disaster decision support demo)"
+    OSM_TIMEOUT_S: float = 60.0
+    OSM_CACHE_TTL_S: int = 3600       # in-process + PostGIS freshness for cached layers
+    OSM_MAX_FEATURES: int = 3000      # safety cap per layer per request
+    OSM_MAX_BBOX_DEG2: float = 2.0    # max bbox area (deg^2) per Overpass request
+    OSM_ATTEMPTS: int = 3             # retry attempts with exponential backoff
+    OSM_BACKOFF_BASE_S: float = 1.0   # delays: 1s, 2s, 4s
+
     # Risk model weights (configurable baseline — not official government formula)
     RISK_WEIGHT_HAZARD: float = 0.40
     RISK_WEIGHT_EXPOSURE: float = 0.20

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
     district, habitations, risk, relocation, scenarios, data_status, validation,
-    spatial, routing, data, hazards
+    spatial, routing, data, hazards, osm, hazard_routing
 )
 from app.core.config import settings
 
@@ -55,8 +55,10 @@ app.include_router(data_status.router, prefix="/api/v1/data-sources", tags=["Dat
 app.include_router(validation.router, prefix="/api/v1/validate", tags=["Validation"])
 app.include_router(spatial.router, prefix="/api/v1/spatial", tags=["Spatial"])
 app.include_router(routing.router, prefix="/api/v1/routing", tags=["Routing"])
+app.include_router(hazard_routing.router, prefix="/api/v1/routing", tags=["Hazard-Aware Routing"])
 app.include_router(data.router, prefix="/api/v1/data", tags=["Live Data"])
 app.include_router(hazards.router, prefix="/api/v1/hazards", tags=["Hazards"])
+app.include_router(osm.router, prefix="/api/v1/osm", tags=["OpenStreetMap"])
 
 
 @app.get("/health")

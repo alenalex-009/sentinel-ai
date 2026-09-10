@@ -342,5 +342,68 @@ CREATE INDEX IF NOT EXISTS idx_relocation_assignments_plan ON relocation_assignm
 CREATE INDEX IF NOT EXISTS idx_relocation_assignments_habitation ON relocation_assignments(habitation_id);
 
 -- ────────────────────────────────────────────────────────────────────────
+-- OSM vector layers (Phase 6) — cached Overpass feature data.
+-- PostGIS is an optional second tier behind the in-process TTL cache: when
+-- the database is down these tables are simply not written/read and the OSM
+-- endpoints stay honest LIVE/CACHED from memory alone. geom is 4326 GeoJSON
+-- polygons/lines/points per feature; fetched_at marks the Overpass fetch.
+-- ────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS osm_roads (
+    id BIGSERIAL PRIMARY KEY,
+    osm_type VARCHAR(16) NOT NULL,
+    osm_id BIGINT NOT NULL,
+    name TEXT,
+    tags JSONB,
+    category VARCHAR(32) NOT NULL DEFAULT 'roads',
+    geom GEOMETRY(Geometry, 4326),
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (osm_type, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_roads_geom ON osm_roads USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_osm_roads_fetched ON osm_roads(fetched_at);
+
+CREATE TABLE IF NOT EXISTS osm_buildings (
+    id BIGSERIAL PRIMARY KEY,
+    osm_type VARCHAR(16) NOT NULL,
+    osm_id BIGINT NOT NULL,
+    name TEXT,
+    tags JSONB,
+    category VARCHAR(32) NOT NULL DEFAULT 'buildings',
+    geom GEOMETRY(Geometry, 4326),
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (osm_type, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_buildings_geom ON osm_buildings USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_osm_buildings_fetched ON osm_buildings(fetched_at);
+
+CREATE TABLE IF NOT EXISTS osm_facilities (
+    id BIGSERIAL PRIMARY KEY,
+    osm_type VARCHAR(16) NOT NULL,
+    osm_id BIGINT NOT NULL,
+    name TEXT,
+    tags JSONB,
+    category VARCHAR(32) NOT NULL DEFAULT 'facilities',
+    geom GEOMETRY(Geometry, 4326),
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (osm_type, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_facilities_geom ON osm_facilities USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_osm_facilities_fetched ON osm_facilities(fetched_at);
+
+CREATE TABLE IF NOT EXISTS osm_water_features (
+    id BIGSERIAL PRIMARY KEY,
+    osm_type VARCHAR(16) NOT NULL,
+    osm_id BIGINT NOT NULL,
+    name TEXT,
+    tags JSONB,
+    category VARCHAR(32) NOT NULL DEFAULT 'water',
+    geom GEOMETRY(Geometry, 4326),
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (osm_type, osm_id)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_water_geom ON osm_water_features USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_osm_water_fetched ON osm_water_features(fetched_at);
+
+-- ────────────────────────────────────────────────────────────────────────
 -- Apply schema changes to PostGIS (idempotent). Run once per environment.
 -- ────────────────────────────────────────────────────────────────────────

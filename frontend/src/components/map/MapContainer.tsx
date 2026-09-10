@@ -4,6 +4,7 @@ import type {
   DataStatus,
   GeoJsonFeatureCollection,
   HabitationListItem,
+  OSMFeatureCategory,
   Priority,
 } from "../../types";
 import { DEMO_HABITATIONS } from "../../data/idukki-seed";
@@ -47,6 +48,11 @@ interface MapContainerProps {
    *  exclusion). Slice 4. */
   safeZonesGeoJSON?: GeoJSON.FeatureCollection | null;
   showSafeZonesLayer?: boolean;
+  /** Live OSM feature layers (Phase 6 — /api/v1/osm/{category}). Keyed by
+   *  category; each value is the GeoJSON FeatureCollection to draw. When
+   *  null the source stays empty; visibility follows showOsmLayers. */
+  osmLayers?: Partial<Record<OSMFeatureCategory, GeoJSON.FeatureCollection | null>>;
+  showOsmLayers?: boolean;
   className?: string;
 }
 
@@ -63,6 +69,8 @@ export function MapContainer({
   hazardGeoJSON = null,
   safeZonesGeoJSON = null,
   showSafeZonesLayer = false,
+  osmLayers = {},
+  showOsmLayers = false,
   className = "",
 }: MapContainerProps) {
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -308,7 +316,84 @@ export function MapContainer({
         layout: { visibility: showSafeZonesLayer ? "visible" : "none" },
       });
 
-      // --- Habitation points (seed props, or PostGIS GeoJSON when provided) ---
+      // --- Live OpenStreetMap feature layers (Phase 6 /api/v1/osm/*) ---
+      // Roads (casing + line colored by kind), buildings (fills), facilities
+      // (points), water (fills + outline). Visibility is driven by the
+      // showOsmLayers toggle; data arrives async via props → setData effects.
+      map.addSource("osm-roads", { type: "geojson", data: (osmLayers.roads as GeoJSON.FeatureCollection) ?? EMPTY_FC });
+      map.addLayer({
+        id: "osm-roads-casing",
+        type: "line",
+        source: "osm-roads",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
+        paint: {
+          "line-color": ["match", ["get", "kind"],
+            "motorway", "#f59e0b", "trunk", "#f59e0b", "primary", "#fbbf24",
+            "secondary", "#a8a29e", "tertiary", "#a8a29e",
+            "#cbd5e1"],
+          "line-width": 5, "line-opacity": 0.35,
+        },
+      });
+      map.addLayer({
+        id: "osm-roads-line",
+        type: "line",
+        source: "osm-roads",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round", visibility: "none" },
+        paint: {
+          "line-color": ["match", ["get", "kind"],
+            "motorway", "#f59e0b", "trunk", "#f59e0b", "primary", "#fbbf24",
+            "secondary", "#94a3b8", "tertiary", "#94a3b8",
+            "residential", "#64748b", "service", "#475569", "track", "#475569",
+            "#cbd5e1"],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.4, 12, 3, 15, 5.5],
+          "line-opacity": 0.9,
+        },
+      });
+
+      map.addSource("osm-buildings", { type: "geojson", data: (osmLayers.buildings as GeoJSON.FeatureCollection) ?? EMPTY_FC });
+      map.addLayer({
+        id: "osm-buildings-fill",
+        type: "fill",
+        source: "osm-buildings",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#f8fafc", "fill-opacity": 0.28 },
+        layout: { visibility: "none" },
+      });
+
+      map.addSource("osm-facilities", { type: "geojson", data: (osmLayers.facilities as GeoJSON.FeatureCollection) ?? EMPTY_FC });
+      map.addLayer({
+        id: "osm-facilities-dot",
+        type: "circle",
+        source: "osm-facilities",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": 4.5,
+          "circle-color": "#22d3ee",
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#0e7490",
+        },
+        layout: { visibility: "none" },
+      });
+
+      map.addSource("osm-water", { type: "geojson", data: (osmLayers.water as GeoJSON.FeatureCollection) ?? EMPTY_FC });
+      map.addLayer({
+        id: "osm-water-fill",
+        type: "fill",
+        source: "osm-water",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#38bdf8", "fill-opacity": 0.45 },
+        layout: { visibility: "none" },
+      });
+      map.addLayer({
+        id: "osm-water-outline",
+        type: "line",
+        source: "osm-water",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "line-color": "#0ea5e9", "line-width": 1.4 },
+        layout: { visibility: "none" },
+      });
       map.addSource("habitations", { type: "geojson", data: geojsonData });
 
       // Outer glow for high-risk
@@ -565,6 +650,32 @@ export function MapContainer({
     }
   }, [safeZonesGeoJSON, showSafeZonesLayer]);
 
+  // Live OSM layers: swap geometry + visibility when data or toggle changes
+  // (Phase 6). Layer ids per category, hidden until the user enables the layer.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    const LAYER_IDS: Record<OSMFeatureCategory, string[]> = {
+      roads: ["osm-roads-casing", "osm-roads-line"],
+      buildings: ["osm-buildings-fill"],
+      facilities: ["osm-facilities-dot"],
+      water: ["osm-water-fill", "osm-water-outline"],
+    };
+
+    for (const cat of Object.keys(LAYER_IDS) as OSMFeatureCategory[]) {
+      const source = map.getSource(`osm-${cat}`) as maplibregl.GeoJSONSource | undefined;
+      if (!source) continue;
+      source.setData((osmLayers[cat] as GeoJSON.FeatureCollection) ?? EMPTY_FC);
+      const anyFeatures = (osmLayers[cat]?.features?.length ?? 0) > 0;
+      const visibility = anyFeatures && showOsmLayers ? "visible" : "none";
+      for (const layerId of LAYER_IDS[cat]) {
+        if (!map.getLayer(layerId)) continue;
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    }
+  }, [osmLayers, showOsmLayers]);
+
   return (
     <div className={`relative ${className}`}>
       <div ref={containerRef} className="h-full w-full" />
@@ -585,10 +696,27 @@ export function MapContainer({
           excluded
         </div>
       )}
+      {/* OSM feature legend chip */}
+      {showOsmLayers && (
+        <div aria-label="OSM legend" className="absolute right-2 top-20 flex flex-col gap-1 rounded border border-cyan-500/40 bg-slate-950/90 px-2 py-1 text-2xs text-slate-300">
+          <span className="flex items-center gap-1.5">
+            <span className="h-1 w-4 rounded bg-amber-500" /> roads
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 bg-slate-100/70" /> buildings
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-cyan-400" /> facilities
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 bg-sky-400" /> water
+          </span>
+        </div>
+      )}
       {/* Map attribution overlay */}
       <div className="absolute bottom-6 left-2 flex flex-col gap-1">
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-slate-600">
-          Basemap: OpenStreetMap
+          Basemap: CARTO Dark Matter (OpenStreetMap data)
         </span>
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-amber-600">
           {pointsSourceLabel}

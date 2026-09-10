@@ -23,6 +23,7 @@ import {
   Gauge,
   Brain,
   Rocket,
+  Layers,
 } from "lucide-react";
 import { MapContainer } from "../components/map/MapContainer";
 import { DataTypeBadge } from "../components/ui/DataTypeBadge";
@@ -49,6 +50,9 @@ import type {
   RelocationPlanStatus,
   SafeZoneCandidate,
   DataStatus,
+  OSMFeatureCategory,
+  HazardAwareRouteResponse,
+  HazardAnalysis,
 } from "../types";
 import clsx from "clsx";
 
@@ -76,8 +80,10 @@ export function RelocationIntelligence() {
   // ── Multi-engine routing state ──────────────────────────────────────────
   const [engine, setEngine] = useState<RoutingEngine>('osrm');
   const [enginesStatus, setEnginesStatus] = useState<RoutingEnginesStatus | null>(null);
-  const [routeResult, setRouteResult] = useState<EngineRouteResult | null>(null);
+  const [routeResult, setRouteResult] = useState<(EngineRouteResult & { hazard_analysis?: HazardAnalysis }) | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  // Hazard-aware scoring + avoidance (Phase 6 /api/v1/routing/hazard-aware).
+  const [avoidHazards, setAvoidHazards] = useState(true);
 
   // ── Live Slice 5 data (district demand + safe-zone candidates + plan) ──
   const { data: apiDemand, source: demandSource } =
@@ -211,11 +217,15 @@ export function RelocationIntelligence() {
   }, []);
 
   // Fetch a real road route for the selected site via the selected engine.
+  // With hazard avoidance on, the routed geometry is scored against live hazard
+  // buffers and the safest alternative is returned (Phase 6).
   const loadRoute = useCallback(async (engineKey: RoutingEngine, siteId: string) => {
     setRouteLoading(true);
     try {
-      const r = await api.getRoute('munnar-central', siteId, engineKey);
-      setRouteResult(r as EngineRouteResult);
+      const r = avoidHazards
+        ? await api.postHazardAwareRoute('munnar-central', siteId, engineKey, true)
+        : await api.getRoute('munnar-central', siteId, engineKey);
+      setRouteResult(r as unknown as EngineRouteResult & { hazard_analysis?: HazardAwareRouteResponse['hazard_analysis'] });
     } catch (err) {
       // 404 (unknown pair) → surface as UNAVAILABLE with no route.
       setRouteResult(null);
@@ -223,7 +233,7 @@ export function RelocationIntelligence() {
     } finally {
       setRouteLoading(false);
     }
-  }, []);
+  }, [avoidHazards]);
 
   useEffect(() => {
     loadEngines();
@@ -235,13 +245,14 @@ export function RelocationIntelligence() {
     return () => clearInterval(interval);
   }, [loadEngines]);
 
-  // Re-route when the selected site or engine changes. Only seeded demo sites
-  // have OSM paths — discovered grid sites have no route, so skip the fetch.
+  // Re-route when the selected site, engine, or hazard-avoidance mode changes.
+  // Only seeded demo sites have OSM paths — discovered grid sites have no
+  // route, so skip the fetch.
   const routeableSiteIds = useMemo(() => DEMO_CANDIDATE_SITES.map(s => s.id), []);
   useEffect(() => {
     if (!routeableSiteIds.includes(selectedSite.id)) return;
     loadRoute(engine, selectedSite.id);
-  }, [engine, selectedSite.id, loadRoute, routeableSiteIds]);
+  }, [engine, selectedSite.id, avoidHazards, loadRoute, routeableSiteIds]);
 
   // Derive the map overlay + legend label from the current route result.
   // engineLabel is guarded: GraphHopper-era payloads can lack `engine`.
@@ -251,6 +262,55 @@ export function RelocationIntelligence() {
     ? `${engineLabel.toUpperCase()} · ${routeResult.route.distance_km} km · ${routeResult.route.duration_min} min`
     : null;
   const engineOnline = enginesStatus?.engines?.[engine]?.ok ?? null;
+  // Hazard risk badge shown alongside the route when avoidance is on and the
+  // backend returned a scored analysis (Phase 6).
+  const hazardAnalysis = routeResult?.hazard_analysis;
+  const hazardBadge = hazardAnalysis?.risk_label
+    ? `${hazardAnalysis.risk_label}${hazardAnalysis.route_risk_score != null ? ` · score ${hazardAnalysis.route_risk_score.toFixed(1)}` : ''}`
+    : null;
+
+  // ── Live OpenStreetMap feature layers (Phase 6 /api/v1/osm/*) ────────────
+  // One shared Munnar pilot bbox; each category fetched lazily when the user
+  // toggles the layer on. Results render on the map with OSM attribution.
+  const OSM_BBOX = '76.88,9.90,77.26,10.31';
+  const [showOsmLayers, setShowOsmLayers] = useState(false);
+  const [osmLayers, setOsmLayers] =
+    useState<Partial<Record<OSMFeatureCategory, GeoJSON.FeatureCollection | null>>>({});
+  const [osmLoading, setOsmLoading] = useState(false);
+  const [osmStatus, setOsmStatus] = useState<string | null>(null);
+
+  const toggleOsmLayers = useCallback(async () => {
+    const next = !showOsmLayers;
+    setShowOsmLayers(next);
+    if (!next) return;
+    setOsmLoading(true);
+    setOsmStatus('Loading OpenStreetMap layers…');
+    const cats: OSMFeatureCategory[] = ['roads', 'buildings', 'facilities', 'water'];
+    try {
+      const results = await Promise.all(cats.map(c => api.getOsmLayer(c, OSM_BBOX)));
+      const layers: Partial<Record<OSMFeatureCategory, GeoJSON.FeatureCollection | null>> = {};
+      cats.forEach((c, i) => {
+        const r = results[i];
+        layers[c] = r?.features?.length
+          ? (r as GeoJSON.FeatureCollection)
+          : null;
+      });
+      setOsmLayers(layers);
+      const total = cats.reduce((s, c) => s + (layers[c]?.features?.length ?? 0), 0);
+      setOsmStatus(
+        total > 0
+          ? `Live OSM: ${total.toLocaleString()} features · ${cats.map(c => `${c} ${layers[c]?.features?.length ?? 0}`).join(', ')}`
+          : 'OSM provider returned no features for this area',
+      );
+      const r0 = results.find(r => r.data_status);
+      if (r0) console.info(`[osm] status=${r0.data_status} source=${r0.source}`);
+    } catch (err) {
+      setOsmStatus('OSM provider unavailable — layers hidden');
+      console.warn('[Sentinel AI] OSM layers failed:', err);
+    } finally {
+      setOsmLoading(false);
+    }
+  }, [showOsmLayers]);
 
   return (
     <div className="flex h-full overflow-hidden bg-slate-950 text-white">
@@ -360,6 +420,39 @@ export function RelocationIntelligence() {
               );
             })}
           </div>
+          {/* Hazard avoidance toggle (Phase 6) */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={avoidHazards}
+            onClick={() => setAvoidHazards(v => !v)}
+            className={clsx(
+              'mt-2 w-full flex items-center justify-between rounded border px-2.5 py-2 text-left transition-colors',
+              avoidHazards
+                ? 'border-amber-500/40 bg-amber-500/10'
+                : 'border-slate-800 bg-slate-900 hover:border-slate-700',
+            )}
+            title="Score the route against live hazard buffers and pick the safest alternative"
+          >
+            <span className="flex items-center gap-2">
+              <Brain className="h-3.5 w-3.5 text-amber-400" />
+              <span className={clsx('text-xs font-semibold',
+                avoidHazards ? 'text-amber-300' : 'text-slate-300')}>
+                Avoid hazard zones
+              </span>
+            </span>
+            <span
+              className={clsx('relative h-4 w-7 rounded-full transition-colors',
+                avoidHazards ? 'bg-amber-500/60' : 'bg-slate-700')}
+            >
+              <span
+                className={clsx(
+                  'absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all',
+                  avoidHazards ? 'left-3.5' : 'left-0.5',
+                )}
+              />
+            </span>
+          </button>
           <p className="mt-2 text-2xs leading-relaxed text-slate-500">
             All engines route on OpenStreetMap data. OSRM pre-bakes its graph
             (fastest queries); Valhalla costs edges at request time (runtime
@@ -462,6 +555,11 @@ export function RelocationIntelligence() {
                 <span className="text-2xs uppercase tracking-wider text-slate-500">
                   via {engineLabel}
                 </span>
+                {hazardBadge && (
+                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wider text-amber-300">
+                    {hazardBadge}
+                  </span>
+                )}
               </span>
             ) : (
               <span
@@ -488,8 +586,29 @@ export function RelocationIntelligence() {
             clickPopup={false}
             safeZonesGeoJSON={apiSafeZones?.features?.length ? apiSafeZones : null}
             showSafeZonesLayer={safeZonesSource === 'api'}
+            osmLayers={osmLayers}
+            showOsmLayers={showOsmLayers}
             className="h-full w-full"
           />
+          {/* OSM layer toggle */}
+          <button
+            type="button"
+            onClick={toggleOsmLayers}
+            className={`absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-2xs font-semibold backdrop-blur ${
+              showOsmLayers
+                ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
+                : 'border-slate-700 bg-slate-950/85 text-slate-300 hover:border-slate-500'
+            }`}
+            title={osmStatus ?? 'Toggle OpenStreetMap feature layers'}
+          >
+            <Layers className="h-3.5 w-3.5" />
+            {osmLoading ? 'loading OSM…' : showOsmLayers ? 'OSM layers on' : 'OSM layers'}
+          </button>
+          {osmStatus && showOsmLayers && (
+            <div className="absolute left-2 top-10 z-10 max-w-[280px] rounded border border-cyan-500/30 bg-slate-950/85 px-2 py-1 text-2xs text-slate-400">
+              {osmStatus}
+            </div>
+          )}
         </div>
 
         {/* Tabs */}

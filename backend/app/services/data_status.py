@@ -274,6 +274,28 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
         ),
         model_version="OR-Tools 9.10 CP-SAT",
     ),
+    DataSourceStatus(
+        id="osm-overpass",
+        name="OpenStreetMap Vector Features (Overpass API)",
+        organization="OpenStreetMap Foundation (ODbL) + Overpass API",
+        url=settings.OSM_OVERPASS_URL,
+        data_type="OBSERVED",
+        used_for=(
+            "On-demand OSM feature layers — roads, buildings, facilities, "
+            "water — normalized to GeoJSON for map exploration and hazard-"
+            "aware routing context (Phase 6)."
+        ),
+        year_reference="Real-time (public Overpass instances)",
+        update_frequency="On demand (cached from in-process + PostGIS)",
+        availability=SourceAvailability.DEMO,  # runtime-probed on /data-sources
+        limitations=(
+            "Bounding-box driven and capped to keep public Overpass slots "
+            "usable. Results are LIVE or CACHED, never silently relabelled. "
+            "OSM data is community-contributed (ODbL) and may lag ground "
+            "truth; always verify against authoritative disaster databases."
+        ),
+        model_version="Overpass QL (roads/buildings/facilities/water)",
+    ),
 ]
 
 
@@ -293,6 +315,7 @@ DATA_TYPES_BY_SOURCE = {
     "sentinel-risk-engine": ["Computed"],
     "ortools-optimizer": ["Computed"],
     "graphhopper-routing": ["Road network", "Route"],
+    "osm-overpass": ["Vector", "GeoJSON"],
 }
 
 
