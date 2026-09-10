@@ -1,0 +1,122 @@
+# Sentinel AI - routing engine stack (Phase 7, Task A1)
+#
+# Three engines route on the same OpenStreetMap dataset. Geofabrik discontinued
+# the standalone Kerala extract (2026); the default is Geofabrik's "southern
+# zone" which CONTAINS Kerala plus adjacent southern states (overridable via
+# KERALA_PBF_URL). Datasets are built once and persisted under ./data so
+# container restarts never rebuild.
+#
+#   OSRM        :5000  fast, primary (ROUTE_STANDARD / ROUTE_MATRIX)
+#   Valhalla    :8002  advanced, risk-aware routes + isochrones (ROUTE_ADVANCED)
+#   GraphHopper :8989  optional / experimental — matrix / relocation research
+#
+# IMPORTANT: a running container is NOT "READY". Real readiness requires a
+# successful routing request against the Kerala dataset — see smoke.py.
+#
+# No ORS. No changes to backend/frontend application code in this file.
+
+services:
+  # One-shot: clip the Geofabrik southern-zone extract to the Kerala
+  # administrative boundary (GADM polygon, fetched by up.ps1). Runs only from
+  # `docker compose --profile build run --rm osmium-clip` (up.ps1).
+  # Two low-memory steps (this box runs Docker on ~3.9 GB RAM): a streaming
+  # bbox pre-reduction, then a strict polygon cut of the smaller file.
+  osmium-clip:
+    build:
+      context: .
+      dockerfile: Dockerfile.osmium
+    image: sentinel-osmium-tool:local
+    container_name: sentinel-osmium-clip
+    profiles: ["build"]
+    restart: "no"
+    volumes:
+      - ./data:/data
+    command: >-
+      bash -c "set -e &&
+      osmium extract --strategy=simple --bbox=74.7,8.0,77.6,13.0 --overwrite
+        -o /data/tmp/kerala-bbox.osm.pbf /data/zone/southern-zone-latest.osm.pbf &&
+      osmium extract --strategy=simple --polygon=/data/osrm/kerala.geojson --overwrite
+        -o /data/osrm/kerala-latest.osm.pbf /data/tmp/kerala-bbox.osm.pbf"
+
+  # One-shot dataset build (extract + partition + customize). Runs only from
+  # `docker compose --profile build run --rm osrm-build` (up.ps1). Guarded on a
+  # completed sentinel so repeated runs are no-ops; a partial build (no sentinel)
+  # is rebuilt from scratch.
+  osrm-build:
+    image: osrm/osrm-backend:latest
+    container_name: sentinel-osrm-build
+    profiles: ["build"]
+    restart: "no"
+    volumes:
+      - ./data:/data
+    command: >-
+      sh -c "
+      if [ ! -f /data/osrm/kerala-latest.osrm ] || [ ! -f /data/osrm/kerala-latest.osrm.build-complete ] ; then
+        echo '[osrm-build] dataset missing — extract + partition + customize kerala' &&
+        osrm-extract -p /opt/car.lua /data/osrm/kerala-latest.osm.pbf &&
+        osrm-partition /data/osrm/kerala-latest.osrm &&
+        osrm-customize /data/osrm/kerala-latest.osrm &&
+        touch /data/osrm/kerala-latest.osrm.build-complete &&
+        echo '[osrm-build] done';
+      else
+        echo '[osrm-build] dataset present — skipping';
+      fi
+      "
+
+  # OSRM MLD server (dataset prepared by osrm-build and up.ps1 before `up`).
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: sentinel-osrm
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/data
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/osrm/kerala-latest.osrm
+
+  # Valhalla (official scripted image). Builds tiles from the LOCAL clipped
+  # Kerala PBF mounted into /custom_files (tile_urls stays empty so it never
+  # re-downloads the 531 MB zone extract). Tile hashes keep later restarts
+  # from rebuilding; `threads` is capped for this 3.9 GB RAM box.
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    container_name: sentinel-valhalla
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data/valhalla:/custom_files
+      - ./data/osrm/kerala-latest.osm.pbf:/custom_files/kerala-latest.osm.pbf:ro
+    environment:
+      tile_urls: ""
+      use_tiles_ignore_pbf: "False"
+      force_rebuild: "False"
+      build_elevation: "False"
+      build_admins: "False"
+      build_time_zones: "False"
+      build_tar: "False"
+      threads: "8"
+
+  # GraphHopper (pinned israelhikingmap wrapper; classic graphhopper.sh CLI).
+  # Reads the shared persistent PBF directly (-i) and keeps its graph cache
+  # under /data so restarts load, not re-import. Optional/experimental: the
+  # application routing policy never depends on this engine.
+  graphhopper:
+    image: israelhikingmap/graphhopper:10.0
+    container_name: sentinel-graphhopper
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    volumes:
+      - ./data:/data
+    environment:
+      JAVA_OPTS: "-Xmx2g -Xms2g"
+    command:
+      - "-i"
+      - "/data/osrm/kerala-latest.osm.pbf"
+      - "-o"
+      - "/data/graphhopper/graph-cache"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8989"

@@ -46,3 +46,6 @@ skills-lock.json
 /graphhopper/*.jar
 /osm/*.osm
 .vercel
+
+# Phase 7 — local routing engine datasets (PBF + built graphs, hundreds of MB)
+deploy/engines/data/

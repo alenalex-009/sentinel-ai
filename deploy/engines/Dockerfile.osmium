@@ -1,0 +1,12 @@
+FROM ubuntu:24.04
+
+# Clipping tool for the routing stack (Phase 7 / Task A1).
+# Geofabrik discontinued the standalone Kerala extract, so the launcher clips
+# today's "southern zone" extract to the Kerala administrative boundary with
+# osmium-tool (bundled here so reruns never re-run apt).
+RUN apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends osmium-tool \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["osmium"]
+CMD ["help"]
