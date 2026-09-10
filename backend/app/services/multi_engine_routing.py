@@ -60,6 +60,27 @@ ENGINE_LABELS = {
     "valhalla": "OpenStreetMap + Valhalla",
 }
 
+# Phase 7 policy roles: OSRM is the fast primary, Valhalla the advanced engine
+# (risk-aware routes + isochrones), GraphHopper optional/experimental only.
+ENGINE_ROLE = {
+    "osrm": "primary",
+    "valhalla": "advanced",
+    "graphhopper": "optional",
+}
+
+ROUTING_POLICY = {
+    "ROUTE_STANDARD": "osrm -> valhalla",
+    "ROUTE_ADVANCED": "valhalla -> none",
+    "ROUTE_MATRIX": "osrm -> valhalla",
+    "OPTIMIZATION": "ortools (greedy fallback)",
+}
+
+_ROUTING_POLICY_CHAINS = {
+    "ROUTE_STANDARD": ("osrm", "valhalla"),
+    "ROUTE_ADVANCED": ("valhalla",),
+    "ROUTE_MATRIX": ("osrm", "valhalla"),
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -430,79 +451,172 @@ async def route_with_engine(session, habitation_id: str, site_id: str, engine: s
     return result
 
 
+# ── Engine status: reachable vs ready (Phase 7, Task B1) ────────────────────
+# reachable = a cheap probe answered (service reachable).
+# ready = a real Kerala routing request returned a valid payload.
+# A running container is NOT ready (spec constraint #2). ok == ready (kept
+# for backward compatibility).
+
+_ENGINE_PROBE_TIMEOUT_S = 6.0
+
+# Real Kerala smoke pair used for readiness (inside every region's extract).
+_OSRM_READY_URL = "{base}/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+_OSRM_READY_COORDS = ("76.93", "10.01", "77.16", "10.03")
+_VALHALLA_READY_BODY = {
+    "locations": [{"lat": 10.01, "lon": 76.93}, {"lat": 10.03, "lon": 77.16}],
+    "costing": "auto",
+}
+_GH_READY_URL = "{base}/route?point={lat1},{lon1}&point={lat2},{lon2}&profile={profile}"
+
+
+async def _engine_probe(engine: str, base_url: str) -> tuple:
+    """Cheap reachability probe. Returns (reachable: bool, detail: str)."""
+    url = base_url.rstrip("/")
+    def _json(resp):
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
+    try:
+        if engine == "osrm":
+            probe_url = _OSRM_READY_URL.format(
+                base=url, lon1=_OSRM_READY_COORDS[0], lat1=_OSRM_READY_COORDS[1],
+                lon2=_OSRM_READY_COORDS[2], lat2=_OSRM_READY_COORDS[3],
+            )
+            async with httpx.AsyncClient(timeout=_ENGINE_PROBE_TIMEOUT_S) as client:
+                resp = await client.get(probe_url)
+            return resp.status_code == 200, f"HTTP {resp.status_code}"
+        if engine == "valhalla":
+            async with httpx.AsyncClient(timeout=_ENGINE_PROBE_TIMEOUT_S) as client:
+                resp = await client.get(f"{url}/status")
+            ok = resp.status_code == 200 and bool(_json(resp).get("available_actions"))
+            return ok, f"HTTP {resp.status_code}"
+        async with httpx.AsyncClient(timeout=_ENGINE_PROBE_TIMEOUT_S) as client:
+            resp = await client.get(f"{url}/info")
+        ok = resp.status_code == 200 and bool(_json(resp).get("profiles"))
+        return ok, f"HTTP {resp.status_code}"
+    except Exception as exc:
+        return False, f"Unreachable: {type(exc).__name__}"
+
+
+async def _engine_ready(engine: str, base_url: str) -> bool:
+    """Real routing request against the Kerala dataset. Returns ready: bool."""
+    url = base_url.rstrip("/")
+    try:
+        if engine == "osrm":
+            probe_url = _OSRM_READY_URL.format(
+                base=url, lon1=_OSRM_READY_COORDS[0], lat1=_OSRM_READY_COORDS[1],
+                lon2=_OSRM_READY_COORDS[2], lat2=_OSRM_READY_COORDS[3],
+            )
+            async with httpx.AsyncClient(timeout=settings.OSRM_TIMEOUT_S) as client:
+                resp = await client.get(probe_url)
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            return data.get("code") == "Ok" and bool(data.get("routes"))
+        if engine == "valhalla":
+            body = dict(_VALHALLA_READY_BODY)
+            body["costing"] = settings.VALHALLA_COSTING
+            async with httpx.AsyncClient(timeout=settings.VALHALLA_TIMEOUT_S) as client:
+                resp = await client.post(f"{url}/route", json=body)
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            return "trip" in data and not data.get("error_code") and not data.get("error")
+        g_url = _GH_READY_URL.format(
+            base=url, lat1="10.01", lon1="76.93",
+            lat2="10.03", lon2="77.16", profile=settings.GRAPHHOPPER_PROFILE,
+        )
+        async with httpx.AsyncClient(timeout=min(settings.GRAPHHOPPER_TIMEOUT_S, 15.0)) as client:
+            resp = await client.get(g_url)
+        if resp.status_code != 200:
+            return False
+        paths = resp.json().get("paths")
+        return isinstance(paths, list) and bool(paths)
+    except Exception as exc:
+        logger.warning(f"[routing/status] {engine} ready probe failed: {type(exc).__name__}")
+        return False
+
+
+def _engine_entry(engine: str, base_url: Optional[str], reachable: bool, ready: bool,
+                  detail: str) -> dict:
+    return {
+        "tier": ENGINE_TIERS[engine],
+        "role": ENGINE_ROLE[engine],
+        "ok": ready,
+        "reachable": reachable,
+        "ready": ready,
+        "detail": detail,
+        "url": base_url,
+    }
+
+
+def _engine_url(region_key: str, engine: str) -> Optional[str]:
+    if engine == "osrm":
+        return _osrm_base_url(region_key)
+    if engine == "valhalla":
+        return _valhalla_base_url(region_key)
+    return graphhopper_base_url(region_key)
+
+
 async def engines_status(region_key: str = "kerala") -> dict:
-    """Probe every configured engine for the region (used by the UI selector)."""
+    """Probe every configured engine for the region (used by the UI selector).
+
+    Per engine: `reachable` (cheap probe) and `ready` (real Kerala routing
+    request); `ok` == `ready` (backward compatible). GraphHopper is marked
+    `experimental`. The `policy` block documents the approved routing policy.
+    """
     results = {}
-
-    gh_url = graphhopper_base_url(region_key)
-    if gh_url:
-        from app.services.routing_service import graphhopper_health
-        ok, detail = await graphhopper_health(region=region_key)
-        results["graphhopper"] = {
-            "tier": ENGINE_TIERS["graphhopper"], "ok": ok,
-            "detail": detail, "url": gh_url,
-        }
-    else:
-        results["graphhopper"] = {
-            "tier": ENGINE_TIERS["graphhopper"], "ok": False,
-            "detail": "Not configured", "url": None,
-        }
-
-    osrm_url = _osrm_base_url(region_key)
-    if osrm_url:
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(f"{osrm_url}/health")
-            results["osrm"] = {
-                "tier": ENGINE_TIERS["osrm"],
-                "ok": resp.status_code == 200,
-                "detail": f"HTTP {resp.status_code}",
-                "url": osrm_url,
-            }
-        except Exception as exc:
-            results["osrm"] = {
-                "tier": ENGINE_TIERS["osrm"], "ok": False,
-                "detail": f"Unreachable: {type(exc).__name__}", "url": osrm_url,
-            }
-    else:
-        results["osrm"] = {
-            "tier": ENGINE_TIERS["osrm"], "ok": False,
-            "detail": "Not configured", "url": None,
-        }
-
-    valhalla_url = _valhalla_base_url(region_key)
-    if valhalla_url:
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(f"{valhalla_url}/status")
-            results["valhalla"] = {
-                "tier": ENGINE_TIERS["valhalla"],
-                "ok": resp.status_code == 200,
-                "detail": f"HTTP {resp.status_code}",
-                "url": valhalla_url,
-            }
-        except Exception as exc:
-            results["valhalla"] = {
-                "tier": ENGINE_TIERS["valhalla"], "ok": False,
-                "detail": f"Unreachable: {type(exc).__name__}", "url": valhalla_url,
-            }
-    else:
-        results["valhalla"] = {
-            "tier": ENGINE_TIERS["valhalla"], "ok": False,
-            "detail": "Not configured", "url": None,
-        }
+    for engine in ("osrm", "valhalla", "graphhopper"):
+        base_url = _engine_url(region_key, engine)
+        if not base_url:
+            results[engine] = _engine_entry(engine, None, False, False, "Not configured")
+            if engine == "graphhopper":
+                results[engine]["experimental"] = True
+            continue
+        reachable, detail = await _engine_probe(engine, base_url)
+        if not reachable:
+            results[engine] = _engine_entry(engine, base_url, False, False, detail)
+        else:
+            ready = await _engine_ready(engine, base_url)
+            results[engine] = _engine_entry(
+                engine, base_url, True, ready,
+                "reachable (probe ok); real routing request "
+                + ("ok" if ready else "failed — not ready"),
+            )
+        if engine == "graphhopper":
+            results[engine]["experimental"] = True
 
     return {
         "region": region_key,
         "engines": results,
+        "policy": dict(ROUTING_POLICY),
         "note": (
-            "All engines route on OpenStreetMap data. OSRM = fast (pre-baked "
-            "graph), Valhalla = advanced (runtime costing, isochrones), "
-            "GraphHopper = balanced. Engine status reflects this deployment "
-            "only — routes are served only by engines that answer."
+            "All engines route on OpenStreetMap data. OSRM = primary (fast, "
+            "ROUTE_STANDARD/ROUTE_MATRIX), Valhalla = advanced (ROUTE_ADVANCED, "
+            "risk-aware, isochrones), GraphHopper = optional/experimental. "
+            "reachable = the service answers a probe; ready = a real Kerala "
+            "routing request succeeded; ok = ready. Routes are served only by "
+            "engines that are ready."
         ),
         "checked_at": _now_iso(),
     }
+
+
+async def pick_engine(region_key: str = "kerala", policy_key: str = "ROUTE_STANDARD") -> Optional[str]:
+    """First `ready` engine in a policy chain, else None.
+
+    ROUTE_STANDARD / ROUTE_MATRIX → osrm → valhalla; ROUTE_ADVANCED →
+    valhalla only. Returns None when no engine in the chain is ready.
+    """
+    chain = _ROUTING_POLICY_CHAINS.get(policy_key)
+    if not chain:
+        return None
+    status = await engines_status(region_key)
+    for engine in chain:
+        if status.get("engines", {}).get(engine, {}).get("ready"):
+            return engine
+    return None
 
 
 # ── Alternatives / isochrones / matrix (Phase 6) ─────────────────────────────
