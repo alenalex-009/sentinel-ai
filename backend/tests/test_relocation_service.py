@@ -1,17 +1,39 @@
 """Slice 5 — relocation workflow tests.
 
 Tests the demand model, plan lifecycle transitions, and the service-level
-contract (no real DB needed — FakeSession + patched optimizer).
+contract (no real DB needed — FakeSession + patched optimizer). Includes
+DB-down degradation: a service must degrade honestly (DEMO / EMPTY /
+UNAVAILABLE / 503), never crash with an unhandled exception.
 """
 
 import unittest
 from unittest import mock
 
+from fastapi import HTTPException
+
 from app.services.relocation_service import (
     _demand_for_habitation,
     _nominal_capacity,
     RELOCATION_RISK_THRESHOLD,
+    calculate_demand,
+    get_plan,
+    get_safe_zone_sites,
+    transition_plan,
+    create_plan,
 )
+
+
+class BrokenSession:
+    """AsyncSession stub whose execute always raises (PostGIS down)."""
+
+    async def execute(self, *args, **kwargs):
+        raise ConnectionError("connection refused")
+
+    async def commit(self):
+        raise ConnectionError("connection refused")
+
+    async def rollback(self):
+        pass
 
 
 class TestCapacityBaseline(unittest.TestCase):
@@ -95,6 +117,43 @@ class TestPlanTransitions(unittest.TestCase):
 
     def test_draft_cannot_directly_complete(self):
         self.assertNotIn("completed", self._transitions()["draft"])
+
+
+class TestDbDownDegrades(unittest.TestCase):
+    """When PostGIS is unreachable every service entry point must degrade
+    honestly — never raise a raw 500."""
+
+    def test_demand_degrades_to_demo(self):
+        r = _run_async(calculate_demand(BrokenSession(), "idukki"))
+        self.assertEqual(r["data_status"], "DEMO")
+        self.assertEqual(r["total_demand"], 0)
+        self.assertIn("PostGIS unavailable", r["note"])
+
+    def test_safe_zone_sites_returns_none(self):
+        r = _run_async(get_safe_zone_sites(BrokenSession(), "idukki"))
+        self.assertIsNone(r)
+
+    def test_get_plan_degrades_to_unavailable(self):
+        r = _run_async(get_plan(BrokenSession(), 7))
+        self.assertEqual(r["data_status"], "UNAVAILABLE")
+        self.assertIn("PostGIS", r["reason"])
+
+    def test_transition_degrades_to_unavailable(self):
+        r = _run_async(transition_plan(BrokenSession(), 7, "approved"))
+        self.assertEqual(r["data_status"], "UNAVAILABLE")
+        self.assertIn("PostGIS", r["reason"])
+
+    def test_create_plan_raises_503(self):
+        with self.assertRaises(HTTPException) as ctx:
+            _run_async(create_plan(BrokenSession(), "idukki", "n"))
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("PostGIS unavailable", ctx.exception.detail)
+
+
+def _run_async(coro):
+    """Run one coroutine to completion."""
+    import asyncio
+    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 if __name__ == "__main__":

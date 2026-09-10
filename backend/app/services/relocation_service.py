@@ -14,6 +14,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from fastapi import HTTPException
 
 from app.db.database import get_db
 from app.core.config import settings
@@ -181,23 +182,34 @@ async def calculate_demand(
 async def get_safe_zone_sites(
     session: AsyncSession, district_id: str
 ) -> list:
-    """Return Slice-4 safe-zone candidates that pass hard constraints."""
-    result = await session.execute(
-        text(
-            """
-            SELECT id, name, source, geom, suitability_score,
-                   safety_score, estimated_capacity,
-                   constraint_pass, constraint_evidence,
-                   ST_X(geom) AS lon, ST_Y(geom) AS lat
-            FROM safe_zone_candidates
-            WHERE district_id = :district_id
-              AND constraint_pass = TRUE
-              AND source = 'discovered'
-            ORDER BY suitability_score DESC
-            """
-        ),
-        {"district_id": district_id},
-    )
+    """Return Slice-4 safe-zone candidates that pass hard constraints.
+
+    Returns None when the database is unreachable so callers can distinguish
+    "DB down" (None) from "no candidates yet" ([]).
+    """
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT id, name, source, geom, suitability_score,
+                       safety_score, estimated_capacity,
+                       constraint_pass, constraint_evidence,
+                       ST_X(geom) AS lon, ST_Y(geom) AS lat
+                FROM safe_zone_candidates
+                WHERE district_id = :district_id
+                  AND constraint_pass = TRUE
+                  AND source = 'discovered'
+                ORDER BY suitability_score DESC
+                """
+            ),
+            {"district_id": district_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — DB down must not 500
+        logger.warning(
+            f"[relocation] safe-zone site query failed for {district_id}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return None
     rows = result.mappings().all()
     return [dict(r) for r in rows]
 
@@ -225,25 +237,39 @@ async def create_plan(
 
     # 2. Safe-zone candidate sites from Slice 4
     sites = await get_safe_zone_sites(session, district_id)
+    if sites is None:
+        raise HTTPException(
+            status_code=503,
+            detail="PostGIS unavailable - relocation plan cannot be computed "
+                   "or persisted without the database.",
+        )
     if not sites:
         # No discovered sites yet — fall back to candidate_sites from DB
-        result = await session.execute(
-            text(
-                """
-                SELECT id, name, safe_capacity as estimated_capacity,
-                       suitability_score, safety_score, geom,
-                       ST_X(geom) AS lon, ST_Y(geom) AS lat
-                FROM candidate_sites
-                WHERE district_id = :district_id
-                  AND hard_constraints_passed = TRUE
-                ORDER BY suitability_score DESC
-                LIMIT 10
-                """
-                ),
-            {"district_id": district_id},
-        )
-        rows = result.mappings().all()
-        sites = [dict(r) for r in rows]
+        try:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT id, name, safe_capacity as estimated_capacity,
+                           suitability_score, safety_score, geom,
+                           ST_X(geom) AS lon, ST_Y(geom) AS lat
+                    FROM candidate_sites
+                    WHERE district_id = :district_id
+                      AND hard_constraints_passed = TRUE
+                    ORDER BY suitability_score DESC
+                    LIMIT 10
+                    """
+                    ),
+                {"district_id": district_id},
+            )
+        except Exception as exc:  # noqa: BLE001 — DB down must not 500
+            logger.warning(
+                f"[relocation] candidate-site fallback query failed for "
+                f"{district_id}: {type(exc).__name__}: {exc}"
+            )
+            sites = []
+        else:
+            rows = result.mappings().all()
+            sites = [dict(r) for r in rows]
 
     # 3. Build SiteInput list with distance from each habitation.
     #    Both paths above yield dicts with lon/lat; normalise defensively.
@@ -281,6 +307,12 @@ async def create_plan(
     )
 
     # 5. Persist plan
+    if not site_inputs:
+        raise HTTPException(
+            status_code=503,
+            detail="No safe-zone candidates available (database unreachable or "
+                   "empty) - cannot create a relocation plan.",
+        )
     plan = {
         "district_id": district_id,
         "name": name,
@@ -292,81 +324,93 @@ async def create_plan(
         "data_status": result.data_status,
         "created_by": created_by,
     }
-    insert_result = await session.execute(
-        text(
-            """
-            INSERT INTO relocation_plans
-                (district_id, name, status, total_demand,
-                 total_allocated, unallocated, optimizer_status,
-                 data_status, created_by)
-            VALUES
-                (:district_id, :name, :status, :total_demand,
-                 :total_allocated, :unallocated, :optimizer_status,
-                 :data_status, :created_by)
-            RETURNING id
-            """
-        ),
-        plan,
-    )
-    plan_id = insert_result.scalar()
+    try:
+        insert_result = await session.execute(
+            text(
+                """
+                INSERT INTO relocation_plans
+                    (district_id, name, status, total_demand,
+                     total_allocated, unallocated, optimizer_status,
+                     data_status, created_by)
+                VALUES
+                    (:district_id, :name, :status, :total_demand,
+                     :total_allocated, :unallocated, :optimizer_status,
+                     :data_status, :created_by)
+                RETURNING id
+                """
+            ),
+            plan,
+        )
+        plan_id = insert_result.scalar()
 
-    # 6. Persist assignments from allocation output.
-    #    With per-habitation demand, distribute each site's allocation
-    #    proportionally by demand share so the plan is per-habitation.
-    #    Without live habitations (demo fallback) a single cohort row is
-    #    written so plan/assignment linkage survives.
-    assignment_rows = []
-    if hab_list and result.allocations:
-        demand_total = sum(h["relocation_demand"] for h in hab_list) or 1
-        for alloc in result.allocations:
-            for h in hab_list:
-                share = round(
-                    alloc.allocated_population * h["relocation_demand"] / demand_total
-                )
-                if share <= 0:
-                    continue
+        # 6. Persist assignments from allocation output.
+        #    With per-habitation demand, distribute each site's allocation
+        #    proportionally by demand share so the plan is per-habitation.
+        #    Without live habitations (demo fallback) a single cohort row is
+        #    written so plan/assignment linkage survives.
+        assignment_rows = []
+        if hab_list and result.allocations:
+            demand_total = sum(h["relocation_demand"] for h in hab_list) or 1
+            for alloc in result.allocations:
+                for h in hab_list:
+                    share = round(
+                        alloc.allocated_population * h["relocation_demand"] / demand_total
+                    )
+                    if share <= 0:
+                        continue
+                    assignment_rows.append({
+                        "plan_id": plan_id,
+                        "habitation_id": h["habitation_id"],
+                        "site_id": alloc.site_id,
+                        "allocated_population": share,
+                        "distance_km": alloc.distance_km,
+                        "utilization_pct": alloc.utilization_pct,
+                        "surplus_after": alloc.surplus_after,
+                    })
+        else:
+            for alloc in result.allocations:
                 assignment_rows.append({
                     "plan_id": plan_id,
-                    "habitation_id": h["habitation_id"],
+                    "habitation_id": None,
                     "site_id": alloc.site_id,
-                    "allocated_population": share,
+                    "allocated_population": alloc.allocated_population,
                     "distance_km": alloc.distance_km,
                     "utilization_pct": alloc.utilization_pct,
                     "surplus_after": alloc.surplus_after,
                 })
-    else:
-        for alloc in result.allocations:
-            assignment_rows.append({
-                "plan_id": plan_id,
-                "habitation_id": None,
-                "site_id": alloc.site_id,
-                "allocated_population": alloc.allocated_population,
-                "distance_km": alloc.distance_km,
-                "utilization_pct": alloc.utilization_pct,
-                "surplus_after": alloc.surplus_after,
-            })
 
-    for a in assignment_rows:
-        await session.execute(
-            text(
-                """
-                INSERT INTO relocation_assignments
-                    (plan_id, habitation_id, site_id,
-                     allocated_population, distance_km,
-                     utilization_pct, surplus_after, data_status)
-                VALUES
-                    (:plan_id, :habitation_id, :site_id,
-                     :allocated_population, :distance_km,
-                     :utilization_pct, :surplus_after, :data_status)
-                """
-            ),
-            {
-                **a,
-                "data_status": result.data_status,
-            },
+        for a in assignment_rows:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO relocation_assignments
+                        (plan_id, habitation_id, site_id,
+                         allocated_population, distance_km,
+                         utilization_pct, surplus_after, data_status)
+                    VALUES
+                        (:plan_id, :habitation_id, :site_id,
+                         :allocated_population, :distance_km,
+                         :utilization_pct, :surplus_after, :data_status)
+                    """
+                ),
+                {
+                    **a,
+                    "data_status": result.data_status,
+                },
+            )
+
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — DB down mid-persist must not 500
+        await session.rollback()
+        logger.warning(
+            f"[relocation] plan persist failed for {district_id}: "
+            f"{type(exc).__name__}: {exc}"
         )
-
-    await session.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="PostGIS unavailable - relocation plan could not be "
+                   "persisted. No plan was created (nothing fabricated).",
+        ) from exc
     return {
         "data_status": result.data_status,
         "plan_id": plan_id,
@@ -385,10 +429,17 @@ async def create_plan(
 
 async def get_plan(session: AsyncSession, plan_id: int) -> dict:
     """Fetch a plan with its assignments."""
-    plan_result = await session.execute(
-        text("SELECT * FROM relocation_plans WHERE id = :id"),
-        {"id": plan_id},
-    )
+    try:
+        plan_result = await session.execute(
+            text("SELECT * FROM relocation_plans WHERE id = :id"),
+            {"id": plan_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — DB down must not 500
+        logger.warning(
+            f"[relocation] get_plan({plan_id}) query failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return {"data_status": "UNAVAILABLE", "reason": "PostGIS unavailable"}
     plan_row = plan_result.mappings().first()
     if not plan_row:
         return {"data_status": "EMPTY", "reason": "plan not found"}
@@ -416,10 +467,17 @@ async def transition_plan(
         "approved": ["executing", "cancelled"],
         "executing": ["completed", "cancelled"],
     }
-    row = await session.execute(
-        text("SELECT status FROM relocation_plans WHERE id = :id"),
-        {"id": plan_id},
-    )
+    try:
+        row = await session.execute(
+            text("SELECT status FROM relocation_plans WHERE id = :id"),
+            {"id": plan_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — DB down must not 500
+        logger.warning(
+            f"[relocation] transition_plan({plan_id}) query failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return {"data_status": "UNAVAILABLE", "reason": "PostGIS unavailable"}
     current = row.scalar_one_or_none()
     if not current:
         return {"data_status": "EMPTY", "reason": "plan not found"}

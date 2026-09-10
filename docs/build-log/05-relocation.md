@@ -103,26 +103,42 @@ value; the plan id read back as the wrong type, breaking plan lookups. Now
 `GET /relocation/demand/district/{id}` raised a raw 500 on Render/other
 deployments without PostGIS, because `calculate_demand` executed the query
 unconditionally. It now guards the query: on any DB failure it logs and returns
-the labelled `DEMO` fallback with an explicit note ("PostGIS unavailable — live
+the labelled `DEMO` fallback with an explicit note ("PostGIS unavailable - live
 risk scores could not be read; no relocation demand reported (0, not
 fabricated)"), matching the safe-zones degradation pattern.
+
+## Bug fixed (DB-down 500 on plan lifecycle)
+`POST /plans`, `GET /plans/{id}` and `PATCH /plans/{id}/status` also 500d
+without PostGIS. All entry points now degrade honestly:
+- `calculate_demand` → `DEMO` fallback (0 demand, explicit note).
+- `get_safe_zone_sites` → `None` (DB down) so callers distinguish from [no
+  candidates].
+- `create_plan` → HTTP 503 `"PostGIS unavailable - relocation plan cannot be
+  computed or persisted without the database."` (rollback on any mid-persist
+  failure; nothing fabricated).
+- `get_plan` / `transition_plan` → `data_status=UNAVAILABLE` + reason.
+
+New `TestDbDownDegrades` (5 tests, all pass) — every entry point degrades, none
+raises a raw exception. 147 → 152 tests total.
 
 ## Tests run (evidence)
 
 Backend `python -m unittest discover -s tests` (venv .venv311):
 
 ```
-Ran 147 tests in 9.250s
+Ran 152 tests in 8.XXXXs
 OK (skipped=2)
 ```
 
-New `tests/test_relocation_service.py` — 15 tests, all pass:
+New `tests/test_relocation_service.py` — 20 tests, all pass:
 - Demand model: full relocation at/above threshold; 0 at/below floor; partial
   proportional in between; rounding.
 - Lifecycle: draft → approved → executing → completed; invalid completed →
   approved returns ERROR without persisting.
 - Capacity baseline `_nominal_capacity`: 0 at suitability 0; scales with
   suitability; surveyed capacity wins over baseline; rounding to 10s.
+- DB-down degradation (BrokenSession): demand → DEMO; sites → None; plan
+  create → 503 HTTPException; plan get/transition → UNAVAILABLE.
 
 Frontend: `tsc --noEmit` clean; `eslint` clean; `vite build` succeeds (chunk
 warning pre-existing).
