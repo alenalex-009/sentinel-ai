@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://sentinel-ai-backend.onrender.com/api/:path*"
+      "destination": "https://sentinel-ai-backend-go4u.onrender.com/api/:path*"
     },
     {
       "source": "/:path*",
