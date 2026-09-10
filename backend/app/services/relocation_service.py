@@ -108,25 +108,44 @@ def _nominal_capacity(c: dict) -> int:
 async def calculate_demand(
     session: AsyncSession, district_id: str
 ) -> dict:
-    """Compute relocation demand from live current-risk scores."""
-    result = await session.execute(
-        text(
-            """
-            SELECT h.id, h.name, h.population,
-                   r.current_score
-            FROM habitations h
-            JOIN LATERAL (
-                SELECT current_score
-                FROM risk_scores rs
-                WHERE rs.habitation_id = h.id
-                ORDER BY rs.computed_at DESC
-                LIMIT 1
-            ) r ON true
-            WHERE h.district_id = :district_id
-            """
-        ),
-        {"district_id": district_id},
-    )
+    """Compute relocation demand from live current-risk scores.
+
+    When PostGIS is unavailable the labelled DEMO fallback is returned —
+    never a 500. The DEMO branch reports 0 demand and an honest note so an
+    operator can distinguish "nothing to move" from "couldn't check".
+    """
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT h.id, h.name, h.population,
+                       r.current_score
+                FROM habitations h
+                JOIN LATERAL (
+                    SELECT current_score
+                    FROM risk_scores rs
+                    WHERE rs.habitation_id = h.id
+                    ORDER BY rs.computed_at DESC
+                    LIMIT 1
+                ) r ON true
+                WHERE h.district_id = :district_id
+                """
+            ),
+            {"district_id": district_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — DB down must not 500
+        logger.warning(
+            f"[relocation] demand query failed for {district_id}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return {
+            "data_status": "DEMO",
+            "district_id": district_id,
+            "total_demand": 0,
+            "habitations": [],
+            "note": "PostGIS unavailable — live risk scores could not be read; "
+                    "no relocation demand reported (0, not fabricated).",
+        }
     rows = result.mappings().all()
     if not rows:
         return {"data_status": "DEMO", "total_demand": 0, "habitations": []}

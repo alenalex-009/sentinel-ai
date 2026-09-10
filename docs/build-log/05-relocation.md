@@ -99,6 +99,14 @@ the `{habitation_id}` path param and the district endpoint was unreachable
 value; the plan id read back as the wrong type, breaking plan lookups. Now
 `insert_result.scalar()` returns the actual serial id.
 
+## Bug fixed (DB-down 500 on district demand)
+`GET /relocation/demand/district/{id}` raised a raw 500 on Render/other
+deployments without PostGIS, because `calculate_demand` executed the query
+unconditionally. It now guards the query: on any DB failure it logs and returns
+the labelled `DEMO` fallback with an explicit note ("PostGIS unavailable — live
+risk scores could not be read; no relocation demand reported (0, not
+fabricated)"), matching the safe-zones degradation pattern.
+
 ## Tests run (evidence)
 
 Backend `python -m unittest discover -s tests` (venv .venv311):
