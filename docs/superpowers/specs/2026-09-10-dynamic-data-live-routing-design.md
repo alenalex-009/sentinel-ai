@@ -101,6 +101,10 @@ core of this step.
 ### 7.1 `GET /api/v1/evacuation/overview?region=idukki&disaster_type=landslide|flood`
 
 Synthesis for the Command screen. Blocks (each with provenance):
+- `disaster_type` is optional on the overview; when omitted it defaults to the
+  current dominant live hazard. Explicit values are only honoured for
+  read-only scoping of the recommended action — the overview always reflects
+  current conditions (never simulated).
 - current hazards + severity (hazard service, `current_hazards`)
 - hazard/danger-zone GeoJSON polygons
 - affected habitations/locations + population
