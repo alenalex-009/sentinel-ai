@@ -143,7 +143,7 @@ async def calculate_demand(
             "district_id": district_id,
             "total_demand": 0,
             "habitations": [],
-            "note": "PostGIS unavailable — live risk scores could not be read; "
+            "note": "PostGIS unavailable - live risk scores could not be read; "
                     "no relocation demand reported (0, not fabricated).",
         }
     rows = result.mappings().all()
