@@ -113,7 +113,7 @@ async def calculate_demand(
     )
     rows = result.mappings().all()
     if not rows:
-        return {"data_status": "DEMO", "demand": 0, "habitations": []}
+        return {"data_status": "DEMO", "total_demand": 0, "habitations": []}
 
     total_demand = 0
     hab_details = []
