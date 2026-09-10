@@ -63,23 +63,34 @@ OPTIMIZATION     solver=OR-Tools
 
 - Standard/matrix calls try the primary engine; if it is not `ready`, retry the
   fallback transparently and report which engine served.
-- GraphHopper remains available as an optional/experimental engine but is NOT
-  required by the core relocation pipeline.
+- **GraphHopper is explicitly OPTIONAL/EXPERIMENTAL.** It is never required by
+  the core relocation pipeline, never a fallback in ROUTE_STANDARD /
+  ROUTE_ADVANCED / ROUTE_MATRIX, and its status is surfaced as experimental in
+  the engine selector. Enabling it beyond reachable/ready reporting is outside
+  this phase.
 
 ## 6. Relocation pipeline (logical flow)
 
 ```
 Affected locations
   → hazard + risk assessment
-  → safe-zone candidates
+  → safe-zone candidates (with capacity ceilings)
   → OSRM travel matrix (express), Valhalla fallback
-  → OR-Tools optimization
+  → OR-Tools optimization CONSTRAINED by safe-zone capacity
   → optimal population → safe-zone allocation
+  → explicit capacity gap / unallocated demand reported when it occurs
   → Valhalla advanced route (fallback NONE)
   → route validation against active hazard geometry
   → GeoJSON route
   → MapLibre map
 ```
+
+Safe-zone capacity is a hard constraint of the optimization, never a soft
+assumption: the optimizer may not over-allocate any safe zone beyond its
+`estimated_capacity`, and when total demand exceeds total capacity the output
+MUST report an explicit **capacity gap** and **unallocated demand** rather than
+silently forcing assignments. The evacuation overview and the relocation
+plan/assignment outputs all expose these two figures with their provenance.
 
 ### 6.1 Hazard-aware route validation (mandatory)
 
