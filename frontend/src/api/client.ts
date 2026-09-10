@@ -58,7 +58,10 @@ export const api = {
   getHabitations: (districtId = 'idukki', search?: string) => {
     const params = new URLSearchParams({ district_id: districtId })
     if (search) params.set('search', search)
-    return fetchJSON(`/api/v1/habitations/?${params}`)
+    // NOTE: no trailing slash before the query — Vercel's /api/:path* rewrite
+    // does not match paths ending in '/' (edge returns 404), while FastAPI
+    // accepts the slash-less form.
+    return fetchJSON(`/api/v1/habitations?${params}`)
   },
 
   getHabitationDetail: (habitationId: string) =>
