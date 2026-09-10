@@ -17,7 +17,7 @@ async def district_overview(
     return await get_district_overview(db, district_id)
 
 
-@router.get("/")
+@router.get("")
 async def list_districts():
     """List available districts."""
     return {

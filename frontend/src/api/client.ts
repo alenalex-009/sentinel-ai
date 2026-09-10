@@ -131,7 +131,7 @@ export const api = {
   validateAll: () => fetchJSON('/api/v1/validate/all'),
 
   // Data sources
-  getDataSources: () => fetchJSON('/api/v1/data-sources/'),
+  getDataSources: () => fetchJSON('/api/v1/data-sources'),
 
   // Phase 5B — screening zones + historical periods
   getScreeningZones: (districtId = 'idukki'): Promise<ScreeningZonesResponse> =>

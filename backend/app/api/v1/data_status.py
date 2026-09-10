@@ -68,7 +68,7 @@ async def _live_inject(db: AsyncSession, sources: list[dict]) -> None:
             s["error_message"] = "earthquake_events empty — run scripts/ingest_earthquakes.py"
 
 
-@router.get("/")
+@router.get("")
 async def list_data_sources(
     db: AsyncSession = Depends(get_db),
 ):

@@ -10,7 +10,7 @@ from app.services import spatial_service
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_habitations(
     district_id: str = Query("idukki"),
     search: Optional[str] = Query(None),
