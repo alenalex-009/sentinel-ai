@@ -27,6 +27,9 @@ baselines, not official government formulas.
 from __future__ import annotations
 
 import json
+
+import logging
+
 import math
 import time
 from datetime import datetime, timezone
@@ -43,6 +46,8 @@ from app.services.risk_engine import compute_event_escalation
 
 # district id → live-weather region (source of station input for habitations).
 DISTRICT_REGION = {"idukki": "kerala"}
+
+logger = logging.getLogger(__name__)
 
 # ── In-process freshness cache (keyed by district) ──────────────────────────
 _cache: dict = {}
@@ -441,3 +446,102 @@ async def current_risk(
     }
     _cache[cache_key] = {"ts": now_ts, "payload": payload}
     return payload
+
+
+def _rpi_weights() -> dict:
+    return {
+        "risk": settings.RPI_WEIGHT_RISK,
+        "vulnerability": settings.RPI_WEIGHT_VULNERABILITY,
+        "exposed_population": settings.RPI_WEIGHT_EXPOSED_POP,
+        "historical": settings.RPI_WEIGHT_HISTORICAL,
+        "urgency": settings.RPI_WEIGHT_URGENCY,
+    }
+
+
+def _priority_demo_payload(district_id: str, reason: str) -> dict:
+    """Honest DEMO fallback — the documented RPI ranking, labelled not-live."""
+    habitations = demo_data.get_habitation_list(district_id)["habitations"]
+    rpi_data = demo_data.RPI_BY_HABITATION
+    ranked = sorted(
+        [{**h, "rpi_score": rpi_data.get(h["id"], 0)} for h in habitations],
+        key=lambda x: x["rpi_score"],
+        reverse=True,
+    )
+    return {
+        "data_status": "DEMO",
+        "data_type": "DERIVED",
+        "district_id": district_id,
+        "reason": reason,
+        "weights": _rpi_weights(),
+        "note": (
+            "RPI = 0.35×Risk + 0.20×Vulnerability + 0.15×Population + 0.15×Historical "
+            "+ 0.15×Urgency. Configurable baseline weights — not official formula."
+        ),
+        "habitations": ranked,
+    }
+
+
+async def district_priorities(session: AsyncSession, district_id: str = "idukki") -> dict:
+    """Live-first district RPI ranking from the latest persisted risk scores.
+
+    DERIVED when live risk rows exist — rankings come from current_score as
+    recomputed by the risk engine, never re-invented here. On DB error / empty
+    ledger, the DEMO ranking is returned with a reason (never a fake LIVE).
+    """
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT h.id, h.name, h.population, r.current_score
+                FROM habitations h
+                JOIN LATERAL (
+                    SELECT current_score
+                    FROM risk_scores rs
+                    WHERE rs.habitation_id = h.id
+                    ORDER BY rs.computed_at DESC
+                    LIMIT 1
+                ) r ON true
+                WHERE h.district_id = :district_id
+                """
+            ),
+            {"district_id": district_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — DB down must not 500
+        logger.warning(
+            f"[risk] priorities query failed for {district_id}: {type(exc).__name__}: {exc}"
+        )
+        return _priority_demo_payload(
+            district_id, reason=f"risk_scores query failed: {type(exc).__name__}"
+        )
+
+    rows = result.mappings().all()
+    if not rows:
+        return _priority_demo_payload(
+            district_id,
+            reason="no live risk_scores rows persisted yet — demo ranking shown "
+                   "(scores are never re-invented)",
+        )
+
+    ranked = sorted(
+        [{
+            "habitation_id": r["id"],
+            "name": r["name"],
+            "population": r["population"] or 0,
+            "current_score": float(r["current_score"] or 0),
+            "current_score_rounded": int(round(r["current_score"] or 0)),
+        } for r in rows],
+        key=lambda x: x["current_score"],
+        reverse=True,
+    )
+    return {
+        "data_status": "DERIVED",
+        "data_type": "DERIVED",
+        "district_id": district_id,
+        "weights": _rpi_weights(),
+        "note": (
+            "Ranking uses the latest live current_score per habitation (persisted by "
+            "the risk engine) with the documented RPI baseline weights. Scores are "
+            "recomputed live, never re-invented; thresholds match the risk engine."
+        ),
+        "habitations": ranked,
+    }

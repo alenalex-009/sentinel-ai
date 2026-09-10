@@ -57,22 +57,12 @@ async def decision_trace(habitation_id: str):
 @router.get("/priorities")
 async def risk_priorities(
     district_id: str = Query("idukki"),
+    db: AsyncSession = Depends(get_db),
 ):
-    """District-wide RPI ranking."""
-    habitations = demo_data.get_habitation_list(district_id)["habitations"]
-    # Canonical RPI scores live in demo_data (single source shared with the
-    # detail endpoint). Rajakkad = 78 (>=75) so its IMMEDIATE priority matches
-    # the engine classification threshold.
-    rpi_data = demo_data.RPI_BY_HABITATION
-    ranked = sorted(
-        [{**h, "rpi_score": rpi_data.get(h["id"], 0)} for h in habitations],
-        key=lambda x: x["rpi_score"],
-        reverse=True,
-    )
-    return {
-        "data_status": "DEMO",
-        "data_type": "DERIVED",
-        "district_id": district_id,
-        "note": "RPI = 0.35×Risk + 0.20×Vulnerability + 0.15×Population + 0.15×Historical + 0.15×Urgency. Configurable baseline weights.",
-        "habitations": ranked,
-    }
+    """District-wide priority ranking, live-first.
+
+    DERIVED when live risk_scores exist (ranked by latest current_score);
+    DEMO fallback with an explicit reason otherwise. Never re-invents a score
+    and never labels demo data as live.
+    """
+    return await risk_service.district_priorities(db, district_id=district_id)
