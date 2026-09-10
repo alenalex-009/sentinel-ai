@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.core.config import settings
-from app.services import spatial_service, screening
+from app.services import spatial_service, screening, safe_zone_service
 
 router = APIRouter()
 
@@ -67,3 +67,33 @@ async def historical_periods(region: str):
             detail=f"Unknown region: {region}. Supported: kerala, vizag, assam",
         )
     return result
+
+
+@router.post("/safe-zones/discover")
+async def discover_safe_zones(
+    district_id: str = Query("idukki"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run the safe-zone engine: grid discovery + hard constraints + scoring.
+
+    Existing candidate_sites are always included; grid points near them are
+    de-duplicated. Results persist to `safe_zone_candidates` (REPLACE for
+    `discovered`, upsert for `existing`). Returns candidates with constraint
+    evidence and provenance.
+    """
+    return await safe_zone_service.discover_candidates(db, district_id)
+
+
+@router.get("/safe-zones")
+async def list_safe_zones(
+    district_id: str = Query("idukki"),
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Safe-zone candidates as a map-ready DERIVED FeatureCollection.
+
+    Point features scored GREEN/YELLOW/RED with constraint evidence. No
+    polygon layer/land-use data exists in the seed: slope/land-use/water are
+    UNAVAILABLE (fed through), fault + active-hazard exclusion are evaluated.
+    """
+    return await safe_zone_service.get_safe_zones(db, district_id, refresh=refresh)

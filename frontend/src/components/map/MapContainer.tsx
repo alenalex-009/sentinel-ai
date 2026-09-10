@@ -38,6 +38,15 @@ interface MapContainerProps {
   routeFeature?: GeoJSON.Feature | null;
   /** Label for the route legend chip (e.g. "OSRM · 12.4 km · 18 min"). */
   routeLabel?: string | null;
+  /** Active hazard polygons (from /api/v1/hazards/current feature_collection).
+   *  Filled by severity_level; hidden behind the same showHazardLayer toggle
+   *  as the Bhuvan historical overlay. */
+  hazardGeoJSON?: GeoJSON.FeatureCollection | null;
+  /** Safe-zone candidates (from GET /api/v1/spatial/safe-zones). Point layer
+   *  colored by status (green/yellow/red = technically suitable / caution /
+   *  exclusion). Slice 4. */
+  safeZonesGeoJSON?: GeoJSON.FeatureCollection | null;
+  showSafeZonesLayer?: boolean;
   className?: string;
 }
 
@@ -51,6 +60,9 @@ export function MapContainer({
   clickPopup = true,
   routeFeature = null,
   routeLabel = null,
+  hazardGeoJSON = null,
+  safeZonesGeoJSON = null,
+  showSafeZonesLayer = false,
   className = "",
 }: MapContainerProps) {
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -203,6 +215,95 @@ export function MapContainer({
           "line-width": 4,
           "line-opacity": 0.95,
         },
+      });
+
+      // --- Active hazard polygons (Slice 2: live /api/v1/hazards/current) ---
+      map.addSource("hazards", {
+        type: "geojson",
+        data: hazardGeoJSON ?? EMPTY_FC,
+      });
+      map.addLayer({
+        id: "hazards-fill",
+        type: "fill",
+        source: "hazards",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "fill-color": [
+            "match",
+            ["get", "severity_level"],
+            "SEVERE", "#ef4444",
+            "HIGH", "#f97316",
+            "MODERATE", "#eab308",
+            "LOW", "#3b82f6",
+            "#94a3b8",
+          ],
+          "fill-opacity": 0.22,
+        },
+        layout: { visibility: showHazardLayer ? "visible" : "none" },
+      });
+      map.addLayer({
+        id: "hazards-outline",
+        type: "line",
+        source: "hazards",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "line-color": [
+            "match",
+            ["get", "severity_level"],
+            "SEVERE", "#ef4444",
+            "HIGH", "#f97316",
+            "MODERATE", "#eab308",
+            "LOW", "#3b82f6",
+            "#94a3b8",
+          ],
+          "line-width": 1.5,
+          "line-opacity": 0.8,
+        },
+        layout: { visibility: showHazardLayer ? "visible" : "none" },
+      });
+
+      // --- Safe-zone candidates (Slice 4: /api/v1/spatial/safe-zones) ---
+      map.addSource("safe-zones", {
+        type: "geojson",
+        data: safeZonesGeoJSON ?? EMPTY_FC,
+      });
+      map.addLayer({
+        id: "safe-zones-ring",
+        type: "circle",
+        source: "safe-zones",
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            8,
+            7,
+            12,
+            11,
+            14,
+            15,
+          ],
+          "circle-color": [
+            "match",
+            ["get", "status"],
+            "green", "#22c55e",
+            "yellow", "#eab308",
+            "red", "#ef4444",
+            "#94a3b8",
+          ],
+          "circle-opacity": 0.25,
+          "circle-stroke-width": 1.6,
+          "circle-stroke-color": [
+            "match",
+            ["get", "status"],
+            "green", "#22c55e",
+            "yellow", "#eab308",
+            "red", "#ef4444",
+            "#94a3b8",
+          ],
+        },
+        layout: { visibility: showSafeZonesLayer ? "visible" : "none" },
       });
 
       // --- Habitation points (seed props, or PostGIS GeoJSON when provided) ---
@@ -415,7 +516,22 @@ export function MapContainer({
     }
   }, [routeFeature]);
 
-  // Toggle hazard layer
+  // Replace active hazard geometry when the live event payload arrives/updates
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource("hazards") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(hazardGeoJSON ?? EMPTY_FC);
+    const anyFeatures = (hazardGeoJSON?.features?.length ?? 0) > 0;
+    const visibility = anyFeatures && showHazardLayer ? "visible" : "none";
+    for (const layerId of ["hazards-fill", "hazards-outline"]) {
+      if (!map.getLayer(layerId)) continue;
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }, [hazardGeoJSON, showHazardLayer]);
+
+  // Toggle hazard layer (Bhuvan historical overlay)
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -432,6 +548,21 @@ export function MapContainer({
     );
   }, [showHazardLayer]);
 
+  // Safe-zone candidates: swap geometry + toggle visibility when payload/flag
+  // changes (Slice 4).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    const source = map.getSource("safe-zones") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData(safeZonesGeoJSON ?? EMPTY_FC);
+    const anyFeatures = (safeZonesGeoJSON?.features?.length ?? 0) > 0;
+    const visibility = anyFeatures && showSafeZonesLayer ? "visible" : "none";
+    if (map.getLayer("safe-zones-ring")) {
+      map.setLayoutProperty("safe-zones-ring", "visibility", visibility);
+    }
+  }, [safeZonesGeoJSON, showSafeZonesLayer]);
+
   return (
     <div className={`relative ${className}`}>
       <div ref={containerRef} className="h-full w-full" />
@@ -439,6 +570,17 @@ export function MapContainer({
       {routeLabel && (
         <div className="absolute right-2 top-2 rounded border border-cyan-500/40 bg-slate-950/90 px-2 py-1 text-2xs font-semibold text-cyan-300">
           ⤳ {routeLabel}
+        </div>
+      )}
+      {/* Safe-zone legend chip */}
+      {showSafeZonesLayer && (safeZonesGeoJSON?.features?.length ?? 0) > 0 && (
+        <div className="absolute right-2 top-10 flex items-center gap-2 rounded border border-emerald-500/40 bg-slate-950/90 px-2 py-1 text-2xs text-slate-300">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          optional
+          <span className="h-2 w-2 rounded-full bg-yellow-500" />
+          caution
+          <span className="h-2 w-2 rounded-full bg-red-500" />
+          excluded
         </div>
       )}
       {/* Map attribution overlay */}

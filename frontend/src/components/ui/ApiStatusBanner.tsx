@@ -14,8 +14,8 @@ export function ApiStatusBanner({ source, error, className }: ApiStatusBannerPro
     <div className={clsx(
       'flex items-start gap-2 rounded border px-3 py-2 text-xs',
       source === 'demo_fallback'
-        ? 'border-amber-500/30 bg-amber-500/8 text-amber-400'
-        : 'border-red-500/30 bg-red-500/8 text-red-400',
+        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+        : 'border-red-500/30 bg-red-500/10 text-red-400',
       className
     )}>
       <span className="h-1.5 w-1.5 rounded-full mt-1 flex-shrink-0 bg-current" />

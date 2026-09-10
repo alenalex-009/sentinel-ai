@@ -4,13 +4,23 @@ import { Search } from 'lucide-react'
 import { RiskBadge } from '../components/ui/RiskBadge'
 import { PriorityBadge } from '../components/ui/PriorityBadge'
 import { FreshnessBadge } from '../components/ui/FreshnessBadge'
+import { ApiStatusBanner } from '../components/ui/ApiStatusBanner'
+import { useApiWithFallback } from '../hooks/useApiWithFallback'
+import { api } from '../api/client'
+import type { HabitationListItem } from '../types'
 import { DEMO_HABITATIONS } from '../data/idukki-seed'
 
 export function Habitations() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
 
-  const filtered = DEMO_HABITATIONS.filter(h =>
+  const { data: habitations, error, source } = useApiWithFallback<HabitationListItem[]>(
+    () => api.getHabitations('idukki') as Promise<HabitationListItem[]>,
+    DEMO_HABITATIONS,
+  )
+  const list = habitations ?? DEMO_HABITATIONS
+
+  const filtered = list.filter(h =>
     h.name.toLowerCase().includes(search.toLowerCase()) ||
     h.ward.toLowerCase().includes(search.toLowerCase()) ||
     h.taluk.toLowerCase().includes(search.toLowerCase())
@@ -21,10 +31,12 @@ export function Habitations() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-base font-semibold text-slate-200">Habitations — Idukki</h1>
-          <p className="text-xs text-slate-500">{DEMO_HABITATIONS.length} habitations · Pilot region</p>
+          <p className="text-xs text-slate-500">{list.length} habitations · Pilot region</p>
         </div>
         <FreshnessBadge status="DEMO" />
       </div>
+
+      {error && <ApiStatusBanner source={source} error={error} className="mb-4" />}
 
       {/* Search */}
       <div className="relative mb-4">

@@ -58,7 +58,7 @@ function ReportHeader() {
           </div>
         </div>
       </div>
-      <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/8 px-3 py-2">
+      <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2">
         <div className="flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-amber-400/90 leading-relaxed">
@@ -271,7 +271,7 @@ function CapacitySection() {
         </div>
         <div className={clsx(
           'rounded border p-3',
-          gap >= 0 ? 'border-green-500/30 bg-green-500/8' : 'border-red-500/30 bg-red-500/8'
+          gap >= 0 ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'
         )}>
           <div className="text-2xs text-slate-500">Combined Gap / Surplus</div>
           <div className={clsx('text-xl font-bold font-mono', gap >= 0 ? 'text-green-400' : 'text-red-400')}>
@@ -316,7 +316,7 @@ function ScenarioSection() {
   return (
     <div>
       <SectionLabel label="5. Scenario Results" type="SIMULATED" />
-      <div className="rounded border border-cyan-500/30 bg-cyan-500/8 px-3 py-2 mb-4">
+      <div className="rounded border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 mb-4">
         <div className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
           <span className="text-xs font-semibold text-cyan-400">SIMULATION MODE</span>

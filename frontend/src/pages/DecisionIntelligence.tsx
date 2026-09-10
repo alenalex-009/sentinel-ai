@@ -611,7 +611,7 @@ function TopDriversPanel({ drivers }: { drivers: RiskDriversResponse['drivers'] 
                </div>
              </div>
               <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 rounded-full bg-[${'#2a2a2a'}]">
+                <div className="flex-1 h-1.5 rounded-full bg-slate-800">
                   <div
                     className="h-full rounded-full"
                     style={{ width: `${d.score}%`, backgroundColor: '#00b4d8' }}
@@ -689,7 +689,7 @@ function MLExplanationsPanel({ explanations }: { explanations: any }) {
             {explanations.hazard.slice(0, 5).map((e: any, i: number) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="w-32 text-slate-400">{e.feature}</span>
-                <div className="flex-1 h-1 rounded-full bg-[${'#2a2a2a'}]">
+                <div className="flex-1 h-1 rounded-full bg-slate-800">
                   <div className="h-full rounded-full" style={{ width: `${e.percentage}%`, backgroundColor: '#00b4d8' }} />
                </div>
                 <span className="font-mono text-white w-10 text-right">{e.percentage}%</span>
@@ -703,7 +703,7 @@ function MLExplanationsPanel({ explanations }: { explanations: any }) {
             {explanations.vulnerability.slice(0, 5).map((e: any, i: number) => (
               <div key={i} className="flex items-center gap-2 text-xs">
                 <span className="w-32 text-slate-400">{e.feature}</span>
-                <div className="flex-1 h-1 rounded-full bg-[${'#2a2a2a'}]">
+                <div className="flex-1 h-1 rounded-full bg-slate-800">
                   <div className="h-full rounded-full" style={{ width: `${e.percentage}%`, backgroundColor: '#33b5e5' }} />
                </div>
                 <span className="font-mono text-white w-10 text-right">{e.percentage}%</span>

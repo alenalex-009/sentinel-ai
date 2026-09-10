@@ -1,0 +1,1 @@
+"""Ingestion package: real data → PostGIS (weather, earthquakes, ...)."""

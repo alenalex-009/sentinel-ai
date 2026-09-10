@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.services import demo_data
+from app.services import risk_service
 
 router = APIRouter()
 
@@ -15,6 +16,30 @@ async def risk_intelligence(
 ):
     """Risk intelligence panel data for the district."""
     return demo_data.get_risk_intelligence(district_id, mode)
+
+
+@router.get("/current")
+async def risk_current(
+    district_id: str = Query("idukki"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dynamic current risk fed by live weather + active hazard events.
+
+    LIVE when weather observations are present (per-habitation nearest-station
+    72h rainfall + active-event exposure escalation); DEMO labeled fallback
+    otherwise. Each live recompute persists a ledger row to risk_scores.
+    """
+    return await risk_service.current_risk(db, district_id=district_id)
+
+
+@router.get("/current/timeline/{habitation_id}")
+async def risk_timeline(
+    habitation_id: str,
+    limit: int = Query(30),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recompute history for one habitation (risk-delta timeline)."""
+    return await risk_service.get_timeline(db, habitation_id, limit=limit)
 
 
 @router.get("/drivers/{habitation_id}")

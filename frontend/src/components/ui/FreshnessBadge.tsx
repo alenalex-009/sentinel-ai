@@ -13,6 +13,7 @@ const STATUS_CLASS: Record<DataStatus, string> = {
   SIMULATION: 'border-cyan-500/30 text-cyan-400',
   UNAVAILABLE: 'border-red-500/30 text-red-400',
   STALE: 'border-orange-500/30 text-orange-400',
+  EMPTY: 'border-slate-500/30 text-slate-400',
 }
 
 const DOT_CLASS = {
@@ -21,6 +22,7 @@ const DOT_CLASS = {
   SIMULATION: 'bg-cyan-400',
   UNAVAILABLE: 'bg-red-400',
   STALE: 'bg-orange-400',
+  EMPTY: 'bg-slate-500',
 }
 
 export function FreshnessBadge({ status, ageHours, source }: FreshnessBadgeProps) {
@@ -33,7 +35,7 @@ export function FreshnessBadge({ status, ageHours, source }: FreshnessBadgeProps
     }
     >
       <span className={clsx('h-1.5 w-1.5 rounded-full', DOT_CLASS[status])} />
-      <span className="text-amber-400/90">{status === 'DEMO' ? 'DEMO' : status}</span>
+      <span className="text-current">{status === 'DEMO' ? 'DEMO' : status}</span>
       {ageHours != null && (
         <span className="opacity-60 text-faint">+{ageHours}h</span>
       )}

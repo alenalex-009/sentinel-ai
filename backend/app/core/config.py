@@ -13,6 +13,20 @@ class Settings(BaseSettings):
     BHUVAN_WMS_URL: str = "https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms"
     IMD_API_URL: str = "https://api.imd.gov.in"  # placeholder
 
+    # Real-time weather (WeatherAPI.com — current + 3-day forecast + alerts).
+    # The key is a SERVER-SIDE secret from backend/.env; it is never sent to
+    # the frontend or committed. When unset, weather endpoints report
+    # UNAVAILABLE-with-reason and the demo fallback stays labeled DEMO.
+    WEATHER_API_KEY: Optional[str] = None
+    WEATHER_API_BASE_URL: str = "https://api.weatherapi.com/v1"
+    WEATHER_TIMEOUT_S: float = 10.0
+    WEATHER_CACHE_TTL_S: int = 900
+
+    # USGS historical earthquake catalog (CSV ingestion source). Absolute path
+    # to the raw USGS India catalog; server-side only (often outside the repo).
+    EARTHQUAKE_CSV_PATH: str = ""
+    EARTHQUAKE_SOURCE_URL: str = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/csv.php"
+
     # Spatial analysis (Phase 3)
     SITE_PROXIMITY_RADIUS_M: float = 5000.0  # deterministic default radius
 
@@ -66,6 +80,16 @@ class Settings(BaseSettings):
     RPI_WEIGHT_HISTORICAL: float = 0.15
     RPI_WEIGHT_URGENCY: float = 0.15
 
+    # Hazard-event activation (Slice 2) — live weather/quake → active events.
+    # A rain hazard activates only when a station's 72h rainfall (DERIVED from
+    # live weather) meets RAINFALL_TRIGGER_MM; an earthquake hazard activates
+    # only for recent (HAZARD_QUAKE_ACTIVE_DAYS) events with magnitude >=
+    # EARTHQUAKE_ALERT_MAG_MIN. Severity ladder + buffer formulas live in
+    # hazard_service.py (documented there).
+    EARTHQUAKE_ALERT_MAG_MIN: float = 5.0     # quake magnitude activation floor
+    HAZARD_QUAKE_ACTIVE_DAYS: int = 7          # quake stays "current" this long
+    HAZARD_CACHE_TTL_S: int = 300              # in-process current-hazard cache
+
     # Event-escalation model (current/operational risk = base risk + escalation)
     # Trigger thresholds below which a source contributes zero escalation.
     RAINFALL_TRIGGER_MM: float = 150.0        # 72h cumulative rainfall threshold
@@ -80,6 +104,28 @@ class Settings(BaseSettings):
     ESCALATION_CAP: float = 15.0
     # NOTE: coefficients/thresholds are Sentinel AI configurable baselines for
     # the SIH demo — NOT official government formulas.
+
+    # Dynamic current risk (Slice 3) — the escalation model above is fed by
+    # LIVE weather_observations + active hazard_events; each live recompute is
+    # persisted to risk_scores as a ledger row (baseline retained per row).
+    RISK_CACHE_TTL_S: int = 300          # in-process dynamic-risk cache
+    RISK_SCORE_STALE_HOURS: float = 6.0  # data_status STALE after this age
+    # Extra escalation per unit of active-hazard exposure intensity (0-100)
+    # measured at the habitation point. Capped together with the rain/sat/river
+    # formula by ESCALATION_CAP. Documented baseline, not an official rule.
+    ESCALATION_EVENT_COEFF: float = 0.50
+
+    # Safe-zone engine (Slice 4) — deterministic candidate discovery + hard
+    # constraint checks + suitability scoring over real spatial tables.
+    SAFE_ZONE_CACHE_TTL_S: int = 300           # in-process safe-zone cache
+    SAFE_ZONE_GRID_RADIUS_KM: float = 15.0     # discovery radius around district centroid
+    SAFE_ZONE_GRID_SPACING_KM: float = 3.0     # discovery grid spacing
+    SAFE_ZONE_FAULT_BUFFER_KM: float = 10.0    # exclusion buffer around fault/epicenter points
+    SAFE_ZONE_HAZARD_BUFFER_KM: float = 0.0    # exclusion buffer around active hazard polygons
+    SAFE_ZONE_MIN_SUITABILITY: float = 50.0    # suitability floor for a GREEN recommendation
+    SAFE_ZONE_MIN_SAFETY: float = 40.0         # safety floor for a GREEN recommendation
+    # Exclusion multipliers are documented Sentinel AI baselines — not official
+    # government land-assessment rules.
 
     class Config:
         env_file = ".env"

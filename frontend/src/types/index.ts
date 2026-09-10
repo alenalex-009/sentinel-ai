@@ -2,9 +2,9 @@
 // Phase 2: extended for full pipeline
 
 export type DataType = 'OBSERVED' | 'DERIVED' | 'ESTIMATED' | 'SIMULATED' | 'RECOMMENDATION'
-export type DataStatus = 'LIVE' | 'DEMO' | 'SIMULATION' | 'UNAVAILABLE' | 'STALE'
+export type DataStatus = 'LIVE' | 'DEMO' | 'SIMULATION' | 'UNAVAILABLE' | 'STALE' | 'EMPTY'
 export type Priority = 'IMMEDIATE' | 'SHORT-TERM' | 'MEDIUM-TERM' | 'MONITOR' | 'NONE'
-export type HazardType = 'LANDSLIDE' | 'FLOOD' | 'CLOUDBURST' | 'EROSION' | 'MULTI_HAZARD'
+export type HazardType = 'LANDSLIDE' | 'FLOOD' | 'CLOUDBURST' | 'EROSION' | 'MULTI_HAZARD' | 'EARTHQUAKE'
 export type VulnerabilityLevel = 'VERY HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY LOW'
 export type RedZoneStatus =
   | 'RED_ZONE_CANDIDATE'   // system-derived, not official
@@ -325,6 +325,139 @@ export interface GeoJsonFeatureCollection {
   approval_status_note?: string
 }
 
+// ── Active hazard events (Slice 2) ─────────────────────────────────────────
+
+export type HazardSeverityLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'SEVERE'
+
+export interface HazardEventSourceBasis {
+  data_status?: string
+  reason?: string
+  observations?: number
+  recorded?: number
+}
+
+export interface HazardEvent {
+  event_id: string
+  hazard_type: HazardType
+  severity_level: HazardSeverityLevel
+  severity_label: string
+  severity_score: number
+  active: boolean
+  started_at: string
+  source: string
+  data_type: DataType
+  centroid_lat: number
+  centroid_lon: number
+  buffer_radius_km: number
+  event_meta: Record<string, unknown>
+}
+
+export interface CurrentHazardsResponse {
+  data_status: DataStatus
+  reason?: string
+  generated_at: string
+  region: string
+  ttl_seconds: number
+  persisted?: boolean
+  summary?: string
+  source_basis?: {
+    weather: HazardEventSourceBasis
+    earthquakes: HazardEventSourceBasis
+  }
+  events: HazardEvent[]
+  feature_collection: GeoJSON.FeatureCollection
+}
+
+export interface HazardDetailResponse {
+  data_status: DataStatus
+  reason?: string
+  event: HazardEvent | null
+  affected_habitations: {
+    habitation_id: string
+    name: string
+    region: string
+    latitude: number
+    longitude: number
+    exposure_intensity: number
+    distance_km: number
+    basis: { distance_decay: string; habitation_at_risk: boolean }
+  }[]
+  basis_note?: string
+}
+
+// ── Dynamic current risk (Slice 3) ────────────────────────────────────────
+
+export interface RiskSourceBasis {
+  data_status?: string
+  reason?: string
+  observations?: number
+  events_considered?: number
+}
+
+export interface CurrentRiskBasis {
+  weather: RiskSourceBasis
+  hazard_events: RiskSourceBasis
+  soil_saturation: RiskSourceBasis
+  river_level: RiskSourceBasis
+}
+
+export interface DynamicRiskLiveInputs {
+  station_id: string
+  station_place?: string
+  rainfall_mm_72h: number | null
+  soil_saturation_pct: number | null
+  river_level_anomaly_m: number | null
+  hazard_intensity: number
+  covering_event_ids: string[]
+}
+
+export interface CurrentRiskHabitation {
+  id: string
+  name: string
+  population: number
+  latitude: number
+  longitude: number
+  priority: Priority
+  primary_hazard: HazardType
+  baseline_score: number
+  event_escalation: number
+  escalation_weather: number | null
+  escalation_hazard: number | null
+  current_score: number
+  current_score_rounded: number
+  data_status: DataStatus
+  data_type: DataType
+  live_inputs: DynamicRiskLiveInputs | null
+  equation?: string
+}
+
+export interface CurrentRiskResponse {
+  data_status: DataStatus
+  reason?: string
+  district_id: string
+  computed_at: string
+  mode: string
+  basis: CurrentRiskBasis
+  note?: string
+  persisted?: boolean
+  live_habitations?: number
+  habitations: CurrentRiskHabitation[]
+}
+
+export interface RiskDeltaPoint {
+  computed_at: string
+  current_score: number
+  baseline_score: number
+  event_escalation: number | null
+}
+
+export interface RiskTimelineResponse {
+  data_status: DataStatus
+  reason?: string
+  habitation_id?: string
+  points: RiskDeltaPoint[]
+}
+
 export interface SpatialDistance {
   habitation_id: string
   site_id: string
@@ -482,5 +615,71 @@ export interface HistoricalPeriodsResponse {
   status: 'AVAILABLE' | 'UNAVAILABLE'
   periods: HistoricalPeriod[]
   reason?: string
+  note?: string
+}
+
+// ─── Safe-zone candidates (Slice 4) ─────────────────────────────────────────
+
+export type SafeZoneStatus = 'green' | 'yellow' | 'red'
+
+export interface SafeZoneCandidate {
+  id: string
+  district_id: string
+  lat: number
+  lon: number
+  source: 'discovered' | 'existing'
+  status: SafeZoneStatus
+  suitability_score: number | null
+  safety_score: number | null
+  constraint_pass: boolean
+  fault_km: number | null
+  nearest_hazard_km: number | null
+  hazard_id: string | null
+  slope_pct: number | null
+  land_use: string | null
+  water_km: number | null
+  hazard_intensity: number
+  max_intensity: number
+  data_status: DataStatus
+}
+
+export interface SafeZoneDiscoveryRequest {
+  district_id: string
+  dry_run?: boolean
+}
+
+export interface SafeZoneDiscoveryResponse {
+  data_status: DataStatus
+  district_id: string
+  geometry_source: string
+  generated_at: string
+  constraint_note: string
+  sources_used: string[]
+  thresholds: Record<string, number>
+  grid_notes: string[]
+  candidates: SafeZoneCandidate[]
+  candidates_count: number
+  persisted: boolean
+}
+
+export interface SafeZoneCandidateFeature {
+  type: 'Feature'
+  geometry: GeoJSON.Point
+  properties: SafeZoneCandidate & {
+    name?: string | null
+    color: string
+  }
+}
+
+export interface SafeZonesResponse {
+  type: 'FeatureCollection'
+  features: SafeZoneCandidateFeature[]
+  district_id?: string
+  data_status?: DataStatus
+  geometry_source?: string
+  geometry_type?: string
+  time_to_live_s?: number
+  empty_reason?: string
+  status_counts: { green: number; yellow: number; red: number }
   note?: string
 }

@@ -65,11 +65,20 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
         organization="India Meteorological Department (IMD)",
         url="https://mausam.imd.gov.in",
         data_type="OBSERVED",
-        used_for="Rainfall intensity input to hazard model. Threshold: 150mm/72hr.",
+        used_for=(
+            "Official IMD rainfall (reference). Rainfall INPUT to the hazard "
+            "model currently comes live from the WeatherAPI.com provider "
+            "(see weatherapi source) because IMD has no open real-time API in "
+            "this build."
+        ),
         year_reference="Real-time (DEMO: 2024-08-15)",
-        update_frequency="Hourly (live); DEMO uses static snapshot",
+        update_frequency="Hourly (live via weatherapi placeholder)",
         availability=SourceAvailability.DEMO,
-        limitations="Live IMD API not connected in demo. Static snapshot used.",
+        limitations=(
+            "Live IMD API not connected. Real-time rainfall is served by the "
+            "weatherapi provider; IMD remains the reference source when an "
+            "official feed is connected."
+        ),
     ),
     DataSourceStatus(
         id="bhuvan-lulc",
@@ -170,6 +179,56 @@ DATA_SOURCE_REGISTRY: list[DataSourceStatus] = [
         model_version="v0.1.0 — SIH demo build",
     ),
     DataSourceStatus(
+        id="weatherapi",
+        name="WeatherAPI.com — Current Conditions & 3-day Forecast",
+        organization="WeatherAPI.com",
+        url=settings.WEATHER_API_BASE_URL,
+        data_type="OBSERVED",
+        used_for=(
+            "Live current weather + 72h rolling rainfall and 3-day rainfall "
+            "forecast -> event-escalation inputs to dynamic risk (Slice 3)."
+        ),
+        year_reference="Real-time",
+        update_frequency="Hourly (poller)",
+        availability=(
+            SourceAvailability.LIVE
+            if settings.WEATHER_API_KEY
+            else SourceAvailability.UNAVAILABLE
+        ),
+        limitations=(
+            "Rainfall is point-station derived (lat/lon queries, e.g. Munnar). "
+            "72h rolling rainfall is derived from the 3-day forecast as a "
+            "Sentinel AI baseline — not IMD official station data. Stops being "
+            "labeled OBSERVED-derived if the poller has not written in a while."
+        ),
+        model_version="WeatherAPI.com v1 (3-day forecast)",
+    ),
+    DataSourceStatus(
+        id="usgs-earthquakes",
+        name="USGS Earthquake Catalog (India, historical)",
+        organization="US Geological Survey (USGS)",
+        url=settings.EARTHQUAKE_SOURCE_URL,
+        data_type="OBSERVED",
+        used_for=(
+            "Historical earthquake catalogue -> fault-zone proximity constraints "
+            "for safe-zone siting (Slice 4) and earthquake hazard context "
+            "(recent events) for dynamic risk (Slice 3)."
+        ),
+        year_reference="2000-01-01 → present",
+        update_frequency="Bulked CSV ingestion; USGS feed is near-real-time",
+        availability=(
+            SourceAvailability.UNAVAILABLE
+            if not settings.EARTHQUAKE_CSV_PATH
+            else SourceAvailability.DEMO
+        ),
+        limitations=(
+            "Historical context, NOT a prediction source. No deterministic "
+            "earthquake forecasting is claimed. Records are point events "
+            "(USGS best-hypocenter estimates)."
+        ),
+        model_version="USGS earthquake catalogue (CSV)",
+    ),
+    DataSourceStatus(
         id="graphhopper-routing",
         name="OpenStreetMap Road Network Routing (GraphHopper)",
         organization="OpenStreetMap (ODbL) / GraphHopper (self-hosted)",
@@ -229,6 +288,8 @@ DATA_TYPES_BY_SOURCE = {
     "cwc-river": ["Station data", "Forecast"],
     "data-gov-health": ["Tabular", "GeoJSON"],
     "udise-schools": ["Tabular"],
+    "weatherapi": ["Station data", "Forecast"],
+    "usgs-earthquakes": ["Tabular", "Point events"],
     "sentinel-risk-engine": ["Computed"],
     "ortools-optimizer": ["Computed"],
     "graphhopper-routing": ["Road network", "Route"],

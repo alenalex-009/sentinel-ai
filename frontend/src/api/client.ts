@@ -1,7 +1,15 @@
 // Sentinel AI — API client
 // All calls throw on non-2xx so useApiWithFallback can catch and use demo data.
 
-import type { HistoricalPeriodsResponse, ScreeningZonesResponse } from '../types'
+import type {
+  CurrentHazardsResponse,
+  CurrentRiskResponse,
+  HistoricalPeriodsResponse,
+  RiskTimelineResponse,
+  SafeZoneDiscoveryResponse,
+  SafeZonesResponse,
+  ScreeningZonesResponse,
+} from '../types'
 
 // Same-origin by default: dev uses the vite proxy (vite.config.ts),
 // production rewrites /api/* to the Render backend (vercel.json).
@@ -83,6 +91,13 @@ export const api = {
   getRiskPriorities: (districtId = 'idukki') =>
     fetchJSON(`/api/v1/risk/priorities?district_id=${districtId}`),
 
+  // Dynamic current risk (Slice 3) — live weather/hazard fed escalation
+  getCurrentRisk: (districtId = 'idukki'): Promise<CurrentRiskResponse> =>
+    fetchJSON(`/api/v1/risk/current?district_id=${districtId}`),
+
+  getRiskTimeline: (habitationId: string, limit = 30): Promise<RiskTimelineResponse> =>
+    fetchJSON(`/api/v1/risk/current/timeline/${encodeURIComponent(habitationId)}?limit=${limit}`),
+
   // Relocation
   getCandidateSites: (habitationId: string) =>
     fetchJSON(`/api/v1/relocation/candidates?habitation_id=${habitationId}`),
@@ -121,4 +136,28 @@ export const api = {
 
   getHistoricalPeriods: (region = 'kerala'): Promise<HistoricalPeriodsResponse> =>
     fetchJSON(`/api/v1/spatial/history/${region}`),
+
+  // Hazard / disaster intelligence (Slice 2 — live active events)
+  getCurrentHazards: (region?: string): Promise<CurrentHazardsResponse> =>
+    fetchJSON(
+      `/api/v1/hazards/current${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+    ),
+
+  getHazardDetail: (eventId: string) =>
+    fetchJSON(`/api/v1/hazards/detail/${encodeURIComponent(eventId)}`),
+
+  // Safe-zone engine (Slice 4) — discover + retrieve candidates
+  discoverSafeZones: (
+    districtId: string,
+    dryRun = false,
+  ): Promise<SafeZoneDiscoveryResponse> =>
+    postJSON(`/api/v1/spatial/safe-zones/discover`, {
+      district_id: districtId,
+      dry_run: dryRun,
+    }),
+
+  getSafeZones: (districtId: string, refresh = false): Promise<SafeZonesResponse> =>
+    fetchJSON(
+      `/api/v1/spatial/safe-zones?district_id=${districtId}${refresh ? '&refresh=1' : ''}`,
+    ),
 }

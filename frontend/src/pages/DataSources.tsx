@@ -240,10 +240,10 @@ const FALLBACK_DATASETS: DatasetEntry[] = [
 ]
 
 const STATUS_COLORS: Record<SourceStatus, string> = {
-  LIVE: 'border-green-500/30 bg-green-500/8 text-green-400',
-  DEMO: 'border-amber-500/30 bg-amber-500/8 text-amber-400',
-  UNAVAILABLE: 'border-red-500/30 bg-red-500/8 text-red-400',
-  STALE: 'border-orange-500/30 bg-orange-500/8 text-orange-400',
+  LIVE: 'border-green-500/30 bg-green-500/10 text-green-400',
+  DEMO: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+  UNAVAILABLE: 'border-red-500/30 bg-red-500/10 text-red-400',
+  STALE: 'border-orange-500/30 bg-orange-500/10 text-orange-400',
 }
 
 export function DataSources() {
@@ -279,7 +279,7 @@ export function DataSources() {
 
       {/* Trust banner */}
       <div className="border-b border-slate-800 bg-slate-950 px-4 py-2">
-        <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/8 px-3 py-2">
+        <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
           <p className="text-xs text-amber-400/80">
             No live IMD / CWC / KSDMA feeds are connected — those entries are DEMO (static snapshot).

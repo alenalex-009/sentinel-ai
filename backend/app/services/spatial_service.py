@@ -102,7 +102,11 @@ async def get_habitation_geojson(session: AsyncSession, district_id: str) -> dic
                rp.priority,
                ST_AsGeoJSON(h.geom) AS geojson
         FROM habitations h
-        LEFT JOIN risk_scores r ON r.habitation_id = h.id
+        LEFT JOIN (
+            SELECT DISTINCT ON (habitation_id) habitation_id, current_score, baseline_score
+            FROM risk_scores
+            ORDER BY habitation_id, computed_at DESC
+        ) r ON r.habitation_id = h.id
         LEFT JOIN relocation_priorities rp ON rp.habitation_id = h.id
         WHERE h.district_id = :district_id
         ORDER BY r.current_score DESC NULLS LAST

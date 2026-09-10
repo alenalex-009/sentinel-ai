@@ -64,7 +64,11 @@ async def get_habitation_list(session: AsyncSession, district_id: str, search: O
                (r.current_score - r.baseline_score) as risk_change,
                rp.priority, rp.rpi_score
         FROM habitations h
-        LEFT JOIN risk_scores r ON r.habitation_id = h.id
+        LEFT JOIN (
+            SELECT DISTINCT ON (habitation_id) habitation_id, current_score, baseline_score
+            FROM risk_scores
+            ORDER BY habitation_id, computed_at DESC
+        ) r ON r.habitation_id = h.id
         LEFT JOIN relocation_priorities rp ON rp.habitation_id = h.id
         WHERE h.district_id = :district_id
         ORDER BY r.current_score DESC NULLS LAST
@@ -125,7 +129,13 @@ async def get_habitation_detail(session: AsyncSession, habitation_id: str) -> di
                v.infrastructure_score, v.accessibility_score,
                rp.priority, rp.rpi_score
         FROM habitations h
-        LEFT JOIN risk_scores r ON r.habitation_id = h.id
+        LEFT JOIN (
+            SELECT DISTINCT ON (habitation_id) habitation_id, current_score, baseline_score,
+                   hazard_component, exposure_component,
+                   vulnerability_component, interaction_component
+            FROM risk_scores
+            ORDER BY habitation_id, computed_at DESC
+        ) r ON r.habitation_id = h.id
         LEFT JOIN vulnerability_assessments v ON v.habitation_id = h.id
         LEFT JOIN relocation_priorities rp ON rp.habitation_id = h.id
         WHERE h.id = :id
