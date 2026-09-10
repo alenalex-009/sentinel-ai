@@ -19,13 +19,13 @@ const NAV_ITEMS = [
   { to: '/relocation', icon: ArrowRightLeft, label: 'Relocation' },
   { to: '/scenarios', icon: FlaskConical, label: 'Scenarios' },
   { to: '/reports', icon: FileText, label: 'Reports' },
-  { to: '/data', icon: Database, label: 'Data' },
+  { to: '/data', icon: Database, label: 'Data & Sources' },
 ]
 
 export function GlobalNav() {
   return (
     <nav
-      className="fixed left-0 top-0 z-50 flex h-full w-[56px] flex-col items-center border-r border-slate-800/80 bg-slate-950 py-3"
+      className="fixed left-0 top-0 z-50 flex h-full w-[68px] flex-col items-center border-r border-slate-800/80 bg-slate-950 py-3"
       aria-label="Main navigation"
     >
       {/* Logo mark */}

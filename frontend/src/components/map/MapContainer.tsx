@@ -132,17 +132,19 @@ export function MapContainer({
       // OpenStreetMap — free raster basemap
       style: {
         version: 8,
-        // Glyph PBF server for symbol layers (habitation name labels). The
-        // MapLibre demo font server is the canonical free source; it hosts
-        // "Open Sans Semibold" only, so text-font must not name other stacks.
+        // CARTO Dark Matter — keyless (no API key required) basemap,
+        // per instructions.md §3. OpenStreetMap was the previous
+        // choice; CARTO is now the canonical keyless source.
         glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
         sources: {
           osm: {
             type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tiles: [
+              "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            ],
             tileSize: 256,
             attribution:
-              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
             maxzoom: 19,
           },
         },
