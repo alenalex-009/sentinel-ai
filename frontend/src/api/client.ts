@@ -45,6 +45,23 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+    return res.json() as Promise<T>
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<{ status: string; database: string }>('/health'),
@@ -111,8 +128,32 @@ export const api = {
   getRelocationDemand: (habitationId: string) =>
     fetchJSON(`/api/v1/relocation/demand/${habitationId}`),
 
+  // District-level relocation demand (Slice 5, live risk-derived)
+  getDistrictRelocationDemand: (districtId: string) =>
+    fetchJSON(`/api/v1/relocation/demand/district/${districtId}`),
+
   getOptimization: (habitationId: string) =>
     fetchJSON(`/api/v1/relocation/optimization/${habitationId}`),
+
+  // Relocation plan lifecycle (Slice 5)
+  createRelocationPlan: (params: {
+    district_id: string
+    name: string
+    created_by?: string
+  }) => postJSON('/api/v1/relocation/plans', params),
+
+  getRelocationPlan: (planId: number) =>
+    fetchJSON(`/api/v1/relocation/plans/${planId}`),
+
+  updateRelocationPlanStatus: (
+    planId: number,
+    newStatus: string,
+    approvedBy?: string,
+  ): Promise<{ data_status: string; reason?: string; plan_id?: number; status?: string }> =>
+    patchJSON(`/api/v1/relocation/plans/${planId}/status`, {
+      new_status: newStatus,
+      approved_by: approvedBy,
+    }),
 
   // Scenarios
   runScenario: (params: Record<string, unknown>) =>

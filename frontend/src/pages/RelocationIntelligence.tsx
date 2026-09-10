@@ -4,7 +4,7 @@
 // balanced / Valhalla advanced) — every route rendered on the basemap with
 // per-engine provenance. Falls back to the labelled demo seed offline.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Users,
@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { MapContainer } from "../components/map/MapContainer";
 import { DataTypeBadge } from "../components/ui/DataTypeBadge";
+import { useApiWithFallback } from "../hooks/useApiWithFallback";
 import {
   DEMO_MUNNAR_CENTRAL,
   DEMO_RELOCATION_DEMAND,
@@ -42,6 +43,12 @@ import type {
   RoutingEngine,
   RoutingEnginesStatus,
   EngineRouteResult,
+  SafeZonesResponse,
+  DistrictRelocationDemand,
+  RelocationPlan,
+  RelocationPlanStatus,
+  SafeZoneCandidate,
+  DataStatus,
 } from "../types";
 import clsx from "clsx";
 
@@ -72,15 +79,125 @@ export function RelocationIntelligence() {
   const [routeResult, setRouteResult] = useState<EngineRouteResult | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
-  const h = DEMO_MUNNAR_CENTRAL;
-  const demand = DEMO_RELOCATION_DEMAND;
-  const selectedSite: CandidateSite =
-    DEMO_CANDIDATE_SITES.find(s => s.id === selectedSiteId) ?? DEMO_CANDIDATE_SITES[0];
-  const selectedCap: CapacityAssessment =
-    DEMO_CAPACITY_ASSESSMENTS[selectedSite.id];
+  // ── Live Slice 5 data (district demand + safe-zone candidates + plan) ──
+  const { data: apiDemand, source: demandSource } =
+    useApiWithFallback<DistrictRelocationDemand>(
+      () => api.getDistrictRelocationDemand('idukki') as Promise<DistrictRelocationDemand>,
+      { data_status: 'DEMO', total_demand: DEMO_RELOCATION_DEMAND.relocation_demand, habitations: [] },
+    );
+  const { data: apiSafeZones, source: safeZonesSource } =
+    useApiWithFallback<SafeZonesResponse>(
+      () => api.getSafeZones('idukki') as Promise<SafeZonesResponse>,
+      { type: 'FeatureCollection', features: [], status_counts: { green: 0, yellow: 0, red: 0 } },
+    );
 
-  const totalCapacity = DEMO_CANDIDATE_SITES.reduce((s, site) => s + site.safe_capacity, 0);
-  const capacityGap = totalCapacity - demand.relocation_demand;
+  const safeZoneCandidates = (apiSafeZones?.features ?? [])
+    .map(f => f.properties as SafeZoneCandidate & { name?: string | null })
+    .filter(p => !!p?.id && p.constraint_pass !== false);
+
+  // Live candidate sites derived from Slice 4 discovered grid points.
+  const liveSites: CandidateSite[] = safeZoneCandidates.map(c => ({
+    id: c.id,
+    name: c.name || c.id,
+    distance_km: 0,
+    suitability_score: c.suitability_score ?? 0,
+    safe_capacity: c.estimated_capacity ?? 0,
+    bottleneck_dimension: '',
+    safety_score: c.safety_score ?? 0,
+    infrastructure_score: 0,
+    accessibility_score: 0,
+    water_score: 0,
+    healthcare_score: 0,
+    education_score: 0,
+    latitude: c.lat,
+    longitude: c.lon,
+    hard_constraints_passed: c.constraint_pass,
+    data_type: 'DERIVED',
+    data_status: c.data_status,
+    notes: c.constraint_pass ? 'Discovered safe-zone candidate (Slice 4)' : 'Excluded candidate',
+  }));
+
+  const candidateSites = liveSites.length > 0 ? liveSites : DEMO_CANDIDATE_SITES;
+  const demandTotal = apiDemand?.total_demand ?? DEMO_RELOCATION_DEMAND.relocation_demand;
+
+  // Live relocation plan lifecycle state (Slice 5).
+  const [plan, setPlan] = useState<RelocationPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planNotify, setPlanNotify] = useState<string | null>(null);
+
+  const loadPlan = useCallback(async (planId: number) => {
+    setPlanLoading(true);
+    try {
+      const p = await api.getRelocationPlan(planId) as RelocationPlan;
+      setPlan(p);
+      setPlanError(null);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : 'plan fetch failed');
+      setPlan(null);
+    } finally {
+      setPlanLoading(false);
+    }
+  }, []);
+
+  const createPlan = useCallback(async () => {
+    setPlanLoading(true);
+    setPlanError(null);
+    setPlanNotify(null);
+    try {
+      const p = await api.createRelocationPlan({
+        district_id: 'idukki',
+        name: `Idukki relocation plan — ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
+        created_by: 'authority-web',
+      }) as RelocationPlan;
+      setPlan(p);
+      setPlanNotify(`Plan #${p.plan_id} created (${p.data_status})`);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : 'plan creation failed');
+    } finally {
+      setPlanLoading(false);
+    }
+  }, []);
+
+  const transitionPlan = useCallback(async (newStatus: RelocationPlanStatus) => {
+    if (!plan?.plan_id) return;
+    setPlanLoading(true);
+    setPlanError(null);
+    setPlanNotify(null);
+    try {
+      const next = await api.updateRelocationPlanStatus(plan.plan_id, newStatus, 'authority-web');
+      if (next?.data_status === 'ERROR') {
+        setPlanError(next.reason ?? 'invalid transition');
+      } else {
+        await loadPlan(plan.plan_id);
+        setPlanNotify(`Plan → ${newStatus}`);
+      }
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : 'status update failed');
+    } finally {
+      setPlanLoading(false);
+    }
+  }, [plan, loadPlan]);
+
+  const h = DEMO_MUNNAR_CENTRAL;
+  const selectedSite: CandidateSite =
+    candidateSites.find(s => s.id === selectedSiteId) ?? candidateSites[0];
+  const selectedCap: CapacityAssessment =
+    DEMO_CAPACITY_ASSESSMENTS[selectedSite.id] ?? {
+      site_id: selectedSite.id,
+      site_name: selectedSite.name,
+      c_safe: selectedSite.safe_capacity,
+      bottleneck: 'capacity unavailable',
+      dimensions: [],
+      required_population: demandTotal,
+      surplus_deficit: 0,
+      can_absorb_alone: false,
+      data_type: 'DERIVED',
+      data_status: selectedSite.data_status,
+    };
+
+  const totalCapacity = candidateSites.reduce((s, site) => s + site.safe_capacity, 0);
+  const capacityGap = totalCapacity - demandTotal;
 
   // Probe per-engine availability once (drives the selector's status dots).
   const loadEngines = useCallback(async () => {
@@ -118,10 +235,13 @@ export function RelocationIntelligence() {
     return () => clearInterval(interval);
   }, [loadEngines]);
 
-  // Re-route when the selected site or engine changes.
+  // Re-route when the selected site or engine changes. Only seeded demo sites
+  // have OSM paths — discovered grid sites have no route, so skip the fetch.
+  const routeableSiteIds = useMemo(() => DEMO_CANDIDATE_SITES.map(s => s.id), []);
   useEffect(() => {
+    if (!routeableSiteIds.includes(selectedSite.id)) return;
     loadRoute(engine, selectedSite.id);
-  }, [engine, selectedSite.id, loadRoute]);
+  }, [engine, selectedSite.id, loadRoute, routeableSiteIds]);
 
   // Derive the map overlay + legend label from the current route result.
   // engineLabel is guarded: GraphHopper-era payloads can lack `engine`.
@@ -148,9 +268,15 @@ export function RelocationIntelligence() {
 
         {/* Quick Stats */}
         <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex gap-1">
+              <DataTypeBadge type={(apiDemand?.data_status as string) === 'DERIVED' ? 'DERIVED' : 'SIMULATED'} />
+              <span className="text-2xs text-slate-500">{demandSource === 'api' ? 'live' : 'demo'}</span>
+            </div>
+          </div>
           <OverviewStatCard
             title="Relocation Demand"
-            value={demand.relocation_demand.toLocaleString()}
+            value={demandTotal.toLocaleString()}
             icon={<Users className="h-4 w-4" />}
             trend="stable"
           />
@@ -168,7 +294,7 @@ export function RelocationIntelligence() {
           />
           <OverviewStatCard
             title="Sites Available"
-            value={DEMO_CANDIDATE_SITES.length.toString()}
+            value={candidateSites.length.toString()}
             icon={<BarChart2 className="h-4 w-4" />}
             trend="stable"
           />
@@ -253,8 +379,10 @@ export function RelocationIntelligence() {
             />
             <StatusIndicator
               label="Site Database"
-              status="active"
-              details={`${DEMO_CANDIDATE_SITES.length} sites loaded`}
+              status={safeZonesSource === 'api' ? 'active' : 'warning'}
+              details={safeZonesSource === 'api'
+                ? `${candidateSites.length} candidates (live)`
+                : `${candidateSites.length} sites loaded (demo)`}
             />
             <StatusIndicator
               label="Routing Engine"
@@ -358,6 +486,8 @@ export function RelocationIntelligence() {
             routeFeature={routeFeature}
             routeLabel={routeLabel}
             clickPopup={false}
+            safeZonesGeoJSON={apiSafeZones?.features?.length ? apiSafeZones : null}
+            showSafeZonesLayer={safeZonesSource === 'api'}
             className="h-full w-full"
           />
         </div>
@@ -385,7 +515,8 @@ export function RelocationIntelligence() {
           <div className="p-4">
             {activeTab === 'sites' && (
               <SitesTab
-                sites={DEMO_CANDIDATE_SITES}
+                sites={candidateSites}
+                capacities={DEMO_CAPACITY_ASSESSMENTS}
                 selectedSiteId={selectedSite.id}
                 onSelectSite={setSelectedSiteId}
                 activeDistance={routeResult?.status === 'OK' ? routeResult.route?.distance_km ?? null : null}
@@ -394,7 +525,16 @@ export function RelocationIntelligence() {
               />
             )}
             {activeTab === 'capacity' && <CapacityTab cap={selectedCap} />}
-            {activeTab === 'allocation' && <AllocationTab />}
+            {activeTab === 'allocation' && (
+              <AllocationTab
+                plan={plan}
+                planLoading={planLoading}
+                planError={planError}
+                planNotify={planNotify}
+                onCreatePlan={createPlan}
+                onTransition={transitionPlan}
+              />
+            )}
           </div>
         </div>
       </main>
@@ -545,7 +685,7 @@ const getTrendIndicator = (trend: 'up' | 'down' | 'stable') => {
 };
 
 // Component: Button Variant
-function ButtonVariant({ variant, onClick, icon, label }: { variant: 'primary' | 'secondary' | 'success' | 'warning' | 'outline'; onClick: () => void; icon: React.ReactNode; label: string }) {
+function ButtonVariant({ variant, onClick, icon, label, disabled = false }: { variant: 'primary' | 'secondary' | 'success' | 'warning' | 'outline'; onClick: () => void; icon: React.ReactNode; label: string; disabled?: boolean }) {
   const variants: Record<string, { bg: string; text: string; hover: string }> = {
     primary: { bg: '#00b4d8', text: '#0a0a0a', hover: '#00b4d8' },
     secondary: { bg: '#1a1a1a', text: '#ffffff', hover: '#2a2a2a' },
@@ -555,7 +695,11 @@ function ButtonVariant({ variant, onClick, icon, label }: { variant: 'primary' |
   };
   const variantStyle = variants[variant] || variants.outline;
   return (
-    <button onClick={onClick} style={{ backgroundColor: variantStyle.bg }} className="flex w-full items-center justify-start gap-3 px-3 py-2 text-left text-sm font-medium transition-all rounded-md text-white hover:opacity-90">
+    <button onClick={onClick} disabled={disabled} style={{ backgroundColor: variantStyle.bg }}
+      className={clsx(
+        'flex w-full items-center justify-start gap-3 px-3 py-2 text-left text-sm font-medium transition-all rounded-md text-white hover:opacity-90',
+        disabled && 'opacity-40 hover:opacity-40 cursor-not-allowed'
+      )}>
       {icon}
       <span>{label}</span>
     </button>
@@ -583,6 +727,7 @@ function StatusIndicator({ label, status, details }: { label: string; status: 'a
 // Tab: Sites — with live road distance from the selected engine
 function SitesTab({
   sites,
+  capacities,
   selectedSiteId,
   onSelectSite,
   activeDistance,
@@ -590,6 +735,7 @@ function SitesTab({
   engineLabel,
 }: {
   sites: CandidateSite[];
+  capacities: Record<string, CapacityAssessment>;
   selectedSiteId: string;
   onSelectSite: (id: string) => void;
   activeDistance: number | null;
@@ -608,9 +754,12 @@ function SitesTab({
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {sites.map(site => {
-          const cap = DEMO_CAPACITY_ASSESSMENTS[site.id];
+          const cap = capacities[site.id];
           const selected = site.id === selectedSiteId;
           const isActive = selected && activeDistance !== null;
+          const cSafe = cap?.c_safe ?? site.safe_capacity;
+          const bottleneck = cap?.bottleneck ?? 'capacity unassessed';
+          const canAbsorb = cap?.can_absorb_alone ?? false;
           return (
             <button
               key={site.id}
@@ -643,14 +792,14 @@ function SitesTab({
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <div className="text-2xs text-slate-400">C_safe</div>
-                  <div className="text-sm font-bold font-mono text-white">{cap.c_safe.toLocaleString()}</div>
+                  <div className="text-sm font-bold font-mono text-white">{cSafe.toLocaleString()}</div>
                 </div>
                 <div>
                   <div className="text-2xs text-slate-400">Bottleneck</div>
-                  <div className="text-xs font-semibold uppercase text-amber-500">{cap.bottleneck}</div>
+                  <div className="text-xs font-semibold uppercase text-amber-500">{bottleneck}</div>
                 </div>
                 <div>
-                  {cap.can_absorb_alone ? (
+                  {canAbsorb ? (
                     <span className="flex items-center gap-1 text-2xs text-green-500"><CheckCircle className="h-3 w-3" /> Can absorb</span>
                   ) : (
                     <span className="flex items-center gap-1 text-2xs text-amber-500"><XCircle className="h-3 w-3" /> Multi-site</span>
@@ -726,28 +875,149 @@ function CapacityTab({ cap }: { cap: CapacityAssessment }) {
   );
 }
 
-// Tab: Allocation
-function AllocationTab() {
-  const opt = DEMO_OPTIMIZATION_RESULT;
+// Tab: Allocation — live relocation plan lifecycle + allocation table.
+// Falls back to the labeled demo optimization seed when the API is down.
+function AllocationTab({
+  plan,
+  planLoading,
+  planError,
+  planNotify,
+  onCreatePlan,
+  onTransition,
+}: {
+  plan: RelocationPlan | null;
+  planLoading: boolean;
+  planError: string | null;
+  planNotify: string | null;
+  onCreatePlan: () => void;
+  onTransition: (s: RelocationPlanStatus) => void;
+}) {
+  // Fallback is the labeled demo optimization result (never relabeled).
+  const demoTotals = DEMO_OPTIMIZATION_RESULT;
+  const totalDemand = plan ? plan.total_demand : demoTotals.total_demand;
+  const totalAllocated = plan ? plan.total_allocated : demoTotals.total_allocated;
+  const status = plan?.status ?? (demoTotals.status === 'FEASIBLE' ? 'draft' : undefined);
+  const allocations: Array<{
+    site_id: string;
+    site_name?: string;
+    allocated_population: number;
+    distance_km: number;
+    utilization_pct: number;
+    surplus_after: number;
+  }> = plan?.assignments?.length
+    ? plan.assignments
+        .filter(a => a.site_id)
+        .map(a => ({
+          site_id: a.site_id,
+          allocated_population: a.allocated_population,
+          distance_km: a.distance_km,
+          utilization_pct: a.utilization_pct,
+          surplus_after: a.surplus_after,
+        }))
+    : demoTotals.allocations.map(a => ({
+        site_id: a.site_id,
+        site_name: a.site_name,
+        allocated_population: a.allocated_population,
+        distance_km: a.distance_km,
+        utilization_pct: a.utilization_pct,
+        surplus_after: a.surplus_after,
+      }));
+  const feasible = plan ? plan.optimizer_status === 'FEASIBLE' || plan.status !== 'cancelled' : demoTotals.status === 'FEASIBLE';
+  const dataStatus = ((plan?.data_status as string) ?? (plan ? 'LIVE' : 'DEMO')) as DataStatus;
+
   return (
     <div className="space-y-3">
-      <h2 className="text-sm font-bold tracking-wide">Recommended Allocation</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold tracking-wide">Relocation Plan & Allocation</h2>
+        <DataTypeBadge type={plan ? ((plan.data_status as string) === 'DERIVED' ? 'DERIVED' : 'RECOMMENDATION') : 'SIMULATED'} />
+      </div>
+
+      {planNotify && (
+        <div className="rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-300">
+          {planNotify}
+        </div>
+      )}
+      {planError && (
+        <div className="flex items-center gap-2 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+          <AlertTriangle className="h-3.5 w-3.5" /> {planError}
+        </div>
+      )}
+
+      {/* Plan creation / lifecycle actions */}
+      {!plan ? (
+        <div className="rounded-lg border border-slate-800/20 bg-slate-900/30 p-3">
+          <p className="mb-2 text-2xs text-slate-400">
+            No live plan loaded. Create one from live demand (Slice 3 risk) and
+            Slice 4 safe-zone candidates — the OR-Tools optimizer allocates each
+            habitation's demand to candidate sites.
+          </p>
+          <ButtonVariant
+            variant="success"
+            disabled={planLoading}
+            onClick={onCreatePlan}
+            icon={<Rocket className="h-4 w-4" />}
+            label={planLoading ? 'Creating plan…' : 'Create Relocation Plan'}
+          />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className={clsx(
+              'rounded border px-2.5 py-1 text-2xs font-mono uppercase tracking-wider',
+              status === 'completed' && 'border-green-500/40 bg-green-500/10 text-green-400',
+              status === 'cancelled' && 'border-red-500/40 bg-red-500/10 text-red-400',
+              (status === 'approved' || status === 'executing') && 'border-amber-500/40 bg-amber-500/10 text-amber-400',
+              status === 'draft' && 'border-slate-600 bg-slate-800/40 text-slate-300',
+            )}>
+              Plan #{plan.plan_id} · {status}
+            </span>
+            <span className="text-2xs text-slate-500">{plan.optimizer_status ?? '—'}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {status === 'draft' && (
+              <>
+                <ButtonVariant variant="success" disabled={planLoading} onClick={() => onTransition('approved')} icon={<CheckCircle className="h-4 w-4" />} label="Approve" />
+                <ButtonVariant variant="outline" disabled={planLoading} onClick={() => onTransition('cancelled')} icon={<XCircle className="h-4 w-4" />} label="Cancel" />
+              </>
+            )}
+            {status === 'approved' && (
+              <>
+                <ButtonVariant variant="warning" disabled={planLoading} onClick={() => onTransition('executing')} icon={<Zap className="h-4 w-4" />} label="Start Execution" />
+                <ButtonVariant variant="outline" disabled={planLoading} onClick={() => onTransition('cancelled')} icon={<XCircle className="h-4 w-4" />} label="Cancel" />
+              </>
+            )}
+            {status === 'executing' && (
+              <>
+                <ButtonVariant variant="success" disabled={planLoading} onClick={() => onTransition('completed')} icon={<CheckCircle className="h-4 w-4" />} label="Mark Completed" />
+                <ButtonVariant variant="outline" disabled={planLoading} onClick={() => onTransition('cancelled')} icon={<XCircle className="h-4 w-4" />} label="Cancel" />
+              </>
+            )}
+            {status === 'completed' && (
+              <ButtonVariant variant="outline" disabled={planLoading} onClick={onCreatePlan} icon={<RefreshCw className="h-4 w-4" />} label="New Plan" />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Allocation summary */}
       <div className={clsx('rounded-lg border p-3',
-        opt.status === 'FEASIBLE'
+        feasible
           ? 'border-green-500/30 bg-green-500/10'
           : 'border-red-500/30 bg-red-500/10'
       )}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <CheckCircle className="h-4 w-4 text-green-500" />
-            <span className="text-sm font-bold text-green-500">{opt.status}</span>
+            <span className="text-sm font-bold text-green-500">{feasible ? 'FEASIBLE' : 'INFEASIBLE'}</span>
           </div>
-          <DataTypeBadge type={opt.data_type} />
+          <DataTypeBadge type={dataStatus as 'DERIVED' | 'RECOMMENDATION' | 'SIMULATED'} />
         </div>
         <p className="text-xs text-slate-400">
-          {opt.total_allocated.toLocaleString()} / {opt.total_demand.toLocaleString()} persons allocated
+          {totalAllocated.toLocaleString()} / {totalDemand.toLocaleString()} persons allocated
+          {plan && plan.unallocated > 0 ? ` · ${plan.unallocated.toLocaleString()} unallocated` : ''}
         </p>
       </div>
+
       <div className="bg-slate-900/30 rounded-lg border border-slate-800/20 overflow-hidden">
         <table className="w-full">
           <thead>
@@ -758,11 +1028,11 @@ function AllocationTab() {
             </tr>
           </thead>
           <tbody>
-            {opt.allocations.map(a => (
-              <tr key={a.site_id} className="border-b border-slate-800/50">
+            {(allocations.length > 0 ? allocations.slice(0, 12) : []) .map((a, i) => (
+              <tr key={`${a.site_id}-${i}`} className="border-b border-slate-800/50">
                 <td className="px-3 py-2">
-                  <div className="text-xs font-medium text-white">{a.site_name.split(' — ')[1] || a.site_name}</div>
-                  <div className="text-2xs text-slate-400">{a.site_name.split(' — ')[0]}</div>
+                  <div className="text-xs font-medium text-white">{a.site_name?.split(' — ')[1] || a.site_id}</div>
+                  <div className="text-2xs text-slate-400">{a.site_name?.split(' — ')[0]}</div>
                 </td>
                 <td className="px-3 py-2 text-xs font-mono text-white">{a.allocated_population.toLocaleString()}</td>
                 <td className="px-3 py-2 text-xs font-mono text-slate-400">{a.distance_km} km</td>
@@ -779,18 +1049,17 @@ function AllocationTab() {
             ))}
           </tbody>
         </table>
+        {allocations.length > 12 && (
+          <p className="px-3 py-2 text-2xs text-slate-500">
+            Showing first 12 of {allocations.length} allocations.
+          </p>
+        )}
       </div>
-      <div className="bg-slate-900/30 rounded-lg border border-slate-800/20 p-3">
-        <div className="text-2xs text-slate-400 mb-2">Constraints Applied</div>
-        <div className="space-y-1">
-          {opt.constraints_applied.map(c => (
-            <div key={c} className="flex items-start gap-2">
-              <CheckCircle className="h-3 w-3 text-cyan-400 flex-shrink-0 mt-0.5" />
-              <span className="text-xs text-slate-400">{c}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <p className="text-2xs text-slate-500">
+        {plan
+          ? `Assignments are per-habitation; allocation from the CP-SAT optimizer.`
+          : 'Showing labeled DEMO seed allocation (API unavailable).'}
+      </p>
     </div>
   );
 }

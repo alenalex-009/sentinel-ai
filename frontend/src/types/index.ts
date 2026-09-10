@@ -239,6 +239,58 @@ export interface OptimizationResult {
   solver_note: string
 }
 
+// ─── Relocation plan lifecycle (Slice 5) ──────────────────────────────────────
+
+export type RelocationPlanStatus =
+  | 'draft'
+  | 'approved'
+  | 'executing'
+  | 'completed'
+  | 'cancelled'
+
+export interface DistrictRelocationDemand {
+  data_status: DataStatus
+  district_id?: string
+  total_demand: number
+  demand_habitations?: number
+  habitations: Array<{
+    habitation_id: string
+    name: string
+    population: number
+    current_score: number
+    relocation_demand: number
+  }>
+  note?: string
+}
+
+export interface RelocationAssignment {
+  id?: number
+  plan_id?: number
+  habitation_id: string | null
+  site_id: string
+  allocated_population: number
+  distance_km: number
+  utilization_pct: number
+  surplus_after: number
+  data_status?: DataStatus
+}
+
+export interface RelocationPlan {
+  data_status: DataStatus
+  plan_id?: number
+  district_id?: string
+  name?: string
+  status: RelocationPlanStatus
+  total_demand: number
+  total_allocated: number
+  unallocated: number
+  optimizer_status?: string
+  assignments: RelocationAssignment[]
+  constraints_applied?: string[]
+  solver_note?: string
+  reason?: string
+}
+
 // ─── Scenarios ────────────────────────────────────────────────────────────────
 
 export interface ScenarioParams {
@@ -631,6 +683,7 @@ export interface SafeZoneCandidate {
   status: SafeZoneStatus
   suitability_score: number | null
   safety_score: number | null
+  estimated_capacity?: number | null
   constraint_pass: boolean
   fault_km: number | null
   nearest_hazard_km: number | null
