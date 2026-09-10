@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS relocation_assignments (
     id SERIAL PRIMARY KEY,
     plan_id INTEGER REFERENCES relocation_plans(id) ON DELETE CASCADE,
     habitation_id VARCHAR(64) REFERENCES habitations(id),
-    site_id VARCHAR(64) REFERENCES candidate_sites(id),
+    site_id VARCHAR(64),
     allocated_population INTEGER,
     distance_km FLOAT,
     utilization_pct FLOAT,

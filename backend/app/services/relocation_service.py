@@ -75,18 +75,34 @@ def _demand_for_habitation(
     return int(population * (excess / (100.0 - RELOCATION_RISK_THRESHOLD)))
 
 
-def _site_from_dict(c: dict) -> optimizer.SiteInput:
-    """Map a safe-zone candidate dict onto the optimizer's SiteInput."""
-    return optimizer.SiteInput(
-        id=c["id"],
-        name=c.get("name") or c["id"],
-        c_safe=int(c.get("estimated_capacity") or c.get("safe_capacity") or 0),
-        distance_km=0.0,
-        suitability_score=c.get("suitability_score") or 0.0,
-        safety_score=c.get("safety_score") or 0.0,
-        infrastructure_score=50.0,
-        hard_constraints_passed=c.get("constraint_pass", True),
+# Sentinel AI capacity baseline — deterministic model used when a candidate
+# site has no surveyed parcel data (Slice 5). Capacity scales with the
+# discovery grid footprint and a documented persons/km² density, then scales
+# with suitability. Always labelled RECOMMENDATION, never OBSERVED.
+_CAPACITY_BASE_PERSONS_KM2 = 250.0          # upland Kerala residential baseline
+_CAPACITY_GRID_CELL_KM2 = 9.0               # 3 km × 3 km discovery cell (see config)
+_CAPACITY_BUILDABLE_FRACTION = 0.30         # share of cell assumed buildable
+_CAPACITY_SUITABILITY_CEILING = 1.0
+
+
+def _nominal_capacity(c: dict) -> int:
+    """Estimate carrying capacity for one candidate site.
+
+    Prefers a surveyed `estimated_capacity` / `safe_capacity` when present;
+    otherwise applies the documented Sentinel AI baseline model from the
+    discovery grid cell size and a density assumption.
+    """
+    surveyed = c.get("estimated_capacity") or c.get("safe_capacity")
+    if surveyed:
+        return int(surveyed)
+    suitability = float(c.get("suitability_score") or 0.0)
+    raw = (
+        _CAPACITY_BASE_PERSONS_KM2
+        * _CAPACITY_GRID_CELL_KM2
+        * _CAPACITY_BUILDABLE_FRACTION
     )
+    scaled = raw * min(_CAPACITY_SUITABILITY_CEILING, suitability / 100.0)
+    return int(round(scaled / 10.0) * 10)
 
 
 async def calculate_demand(
@@ -152,7 +168,8 @@ async def get_safe_zone_sites(
             """
             SELECT id, name, source, geom, suitability_score,
                    safety_score, estimated_capacity,
-                   constraint_pass, constraint_evidence
+                   constraint_pass, constraint_evidence,
+                   ST_X(geom) AS lon, ST_Y(geom) AS lat
             FROM safe_zone_candidates
             WHERE district_id = :district_id
               AND constraint_pass = TRUE
@@ -195,7 +212,8 @@ async def create_plan(
             text(
                 """
                 SELECT id, name, safe_capacity as estimated_capacity,
-                       suitability_score, safety_score, geom
+                       suitability_score, safety_score, geom,
+                       ST_X(geom) AS lon, ST_Y(geom) AS lat
                 FROM candidate_sites
                 WHERE district_id = :district_id
                   AND hard_constraints_passed = TRUE
@@ -206,21 +224,24 @@ async def create_plan(
             {"district_id": district_id},
         )
         rows = result.mappings().all()
-        sites = [_site_from_dict(dict(r)) for r in rows]
+        sites = [dict(r) for r in rows]
 
-    # 3. Build SiteInput list with distance from each habitation
+    # 3. Build SiteInput list with distance from each habitation.
+    #    Both paths above yield dicts with lon/lat; normalise defensively.
     site_inputs: list[optimizer.SiteInput] = []
     for s in sites:
         nearest_dist = 999.0
+        s_lon = s.get("lon") or s.get("longitude") or 0.0
+        s_lat = s.get("lat") or s.get("latitude") or 0.0
         for h in hab_list:
             # rough Euclidean distance for ranking; replaced by PostGIS
             # real distance below when available
-            d = ((s["lon"] - 0) ** 2 + (s["lat"] - 0) ** 2) ** 0.5  # placeholder
+            d = ((s_lon - 0) ** 2 + (s_lat - 0) ** 2) ** 0.5  # placeholder
             nearest_dist = min(nearest_dist, d * 111.0)  # deg→km rough
         si = optimizer.SiteInput(
             id=s["id"],
             name=s.get("name") or s["id"],
-            c_safe=int(s.get("estimated_capacity") or s.get("safe_capacity") or 0),
+            c_safe=_nominal_capacity(s),
             distance_km=min(nearest_dist, 15.0),
             suitability_score=s.get("suitability_score") or 0,
             safety_score=s.get("safety_score") or 0,
@@ -252,7 +273,7 @@ async def create_plan(
         "data_status": result.data_status,
         "created_by": created_by,
     }
-    await session.execute(
+    insert_result = await session.execute(
         text(
             """
             INSERT INTO relocation_plans
@@ -268,13 +289,45 @@ async def create_plan(
         ),
         plan,
     )
-    plan_id_row = (await session.execute(
-        text("SELECT currval(pg_get_serial_sequence('relocation_plans','id'))")
-    )).scalar()
-    plan_id = plan_id_row
+    plan_id = insert_result.scalar()
 
-    # 6. Persist assignments from allocation output
-    for alloc in result.allocations:
+    # 6. Persist assignments from allocation output.
+    #    With per-habitation demand, distribute each site's allocation
+    #    proportionally by demand share so the plan is per-habitation.
+    #    Without live habitations (demo fallback) a single cohort row is
+    #    written so plan/assignment linkage survives.
+    assignment_rows = []
+    if hab_list and result.allocations:
+        demand_total = sum(h["relocation_demand"] for h in hab_list) or 1
+        for alloc in result.allocations:
+            for h in hab_list:
+                share = round(
+                    alloc.allocated_population * h["relocation_demand"] / demand_total
+                )
+                if share <= 0:
+                    continue
+                assignment_rows.append({
+                    "plan_id": plan_id,
+                    "habitation_id": h["habitation_id"],
+                    "site_id": alloc.site_id,
+                    "allocated_population": share,
+                    "distance_km": alloc.distance_km,
+                    "utilization_pct": alloc.utilization_pct,
+                    "surplus_after": alloc.surplus_after,
+                })
+    else:
+        for alloc in result.allocations:
+            assignment_rows.append({
+                "plan_id": plan_id,
+                "habitation_id": None,
+                "site_id": alloc.site_id,
+                "allocated_population": alloc.allocated_population,
+                "distance_km": alloc.distance_km,
+                "utilization_pct": alloc.utilization_pct,
+                "surplus_after": alloc.surplus_after,
+            })
+
+    for a in assignment_rows:
         await session.execute(
             text(
                 """
@@ -289,13 +342,7 @@ async def create_plan(
                 """
             ),
             {
-                "plan_id": plan_id,
-                "habitation_id": alloc.site_id,  # site_id used as habitation ref for now
-                "site_id": alloc.site_id,
-                "allocated_population": alloc.allocated_population,
-                "distance_km": alloc.distance_km,
-                "utilization_pct": alloc.utilization_pct,
-                "surplus_after": alloc.surplus_after,
+                **a,
                 "data_status": result.data_status,
             },
         )
@@ -311,17 +358,7 @@ async def create_plan(
         "total_allocated": result.total_allocated,
         "unallocated": result.unallocated,
         "optimizer_status": result.status,
-        "allocations": [
-            {
-                "site_id": a.site_id,
-                "site_name": a.site_name,
-                "allocated_population": a.allocated_population,
-                "distance_km": a.distance_km,
-                "utilization_pct": a.utilization_pct,
-                "surplus_after": a.surplus_after,
-            }
-            for a in result.allocations
-        ],
+        "allocations": assignment_rows,
         "constraints_applied": result.constraints_applied,
         "solver_note": result.solver_note,
     }

@@ -31,7 +31,7 @@ async def relocation_demand(habitation_id: str):
     return demo_data.get_relocation_demand(habitation_id)
 
 
-@router.get("/demand/{district_id}")
+@router.get("/demand/district/{district_id}")
 async def district_demand(
     district_id: str,
     db: AsyncSession = Depends(get_db),
