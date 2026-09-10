@@ -1,19 +1,44 @@
-"""Relocation intelligence API endpoints."""
+"""Relocation intelligence API endpoints — Slice 5.
 
-from fastapi import APIRouter, Query, Depends
+Extends the demo-driven allocation with real planning primitives:
+- district demand derived from live current-risk scores (Slice 3)
+- candidate sites from the Slice-4 safe-zone engine
+- plan lifecycle: draft → approved → executing → completed
+- assignments persisted per plan
+
+The demo fallback remains labelled DEMO when live data is unavailable.
+"""
+
+from fastapi import APIRouter, Query, Depends, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.services import demo_data, spatial_service, routing_service
 from app.services.db_service import get_candidate_sites, get_capacity_assessment
 from app.services.optimizer import run_optimization, build_sites_from_demo
+from app.services.relocation_service import (
+    create_plan,
+    get_plan as get_plan_svc,
+    transition_plan,
+    calculate_demand,
+)
 
 router = APIRouter()
 
 
 @router.get("/demand/{habitation_id}")
 async def relocation_demand(habitation_id: str):
-    """Relocation demand derived from habitation data."""
+    """Relocation demand derived from habitation data (demo fallback)."""
     return demo_data.get_relocation_demand(habitation_id)
+
+
+@router.get("/demand/{district_id}")
+async def district_demand(
+    district_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """District-level relocation demand derived from live current-risk
+    scores (Slice 3). Falls back to a labelled DEMO estimate."""
+    return await calculate_demand(db, district_id)
 
 
 @router.get("/candidates")
@@ -45,6 +70,40 @@ async def site_capacity(
 ):
     """Carrying capacity assessment for a candidate site."""
     return await get_capacity_assessment(db, site_id)
+
+
+@router.post("/plans")
+async def create_relocation_plan(
+    district_id: str = Body(...),
+    name: str = Body(...),
+    created_by: str = Body(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a relocation plan from live demand (Slice 3) and
+    safe-zone candidates (Slice 4). Returns plan + assignments in draft
+    status; an authority approves to start execution."""
+    return await create_plan(db, district_id, name, created_by)
+
+
+@router.get("/plans/{plan_id}")
+async def get_relocation_plan(
+    plan_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch a plan with its assignments."""
+    return await get_plan_svc(db, plan_id)
+
+
+@router.patch("/plans/{plan_id}/status")
+async def transition_relocation_plan(
+    plan_id: int,
+    new_status: str = Body(...),
+    approved_by: str = Body(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Transition plan lifecycle: draft → approved → executing → completed
+    (+ cancelled)."""
+    return await transition_plan(db, plan_id, new_status, approved_by)
 
 
 @router.get("/optimization/{habitation_id}")
@@ -89,7 +148,7 @@ async def optimization_result(
             if r is not None and r["status"] == "OK":
                 s.distance_km = r["route"]["distance_km"]
                 used_distances.append({
-                    "site_id": s.id, "type": "road", "km": s.distance_km,
+                    "site_id": s.id, "type": "road", "km": r["route"]["distance_km"],
                     "duration_min": r["route"]["duration_min"],
                     "region": (r.get("region") or {}).get("key"),
                     "method": r["route"]["method"],

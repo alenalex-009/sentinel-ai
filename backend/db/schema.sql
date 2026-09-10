@@ -298,9 +298,49 @@ CREATE TABLE IF NOT EXISTS safe_zone_candidates (
 CREATE INDEX IF NOT EXISTS idx_safe_zone_candidates_district ON safe_zone_candidates(district_id);
 CREATE INDEX IF NOT EXISTS idx_safe_zone_candidates_geom ON safe_zone_candidates USING GIST(geom);
 
-ALTER TABLE safe_zone_candidates
-    ADD COLUMN IF NOT EXISTS suitability_score FLOAT CHECK (suitability_score >= 0 AND suitability_score <= 100);
-ALTER TABLE safe_zone_candidates
-    ADD COLUMN IF NOT EXISTS safety_score FLOAT CHECK (safety_score >= 0 AND safety_score <= 100);
-ALTER TABLE safe_zone_candidates
-    ADD COLUMN IF NOT EXISTS estimated_capacity INTEGER CHECK (estimated_capacity >= 0);
+-- Relocation plan lifecycle (Slice 5)
+CREATE TABLE IF NOT EXISTS relocation_plans (
+    id SERIAL PRIMARY KEY,
+    district_id VARCHAR(64) REFERENCES districts(id),
+    name VARCHAR(256) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'approved', 'executing', 'completed', 'cancelled')),
+    description TEXT,
+    total_demand INTEGER,
+    total_allocated INTEGER,
+    unallocated INTEGER,
+    optimizer_status VARCHAR(32),
+    created_by VARCHAR(64),
+    approved_by VARCHAR(64),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    approved_at TIMESTAMPTZ,
+    executed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    data_status VARCHAR(32) DEFAULT 'DEMO',
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_relocation_plans_district ON relocation_plans(district_id);
+CREATE INDEX IF NOT EXISTS idx_relocation_plans_status ON relocation_plans(status);
+
+CREATE TABLE IF NOT EXISTS relocation_assignments (
+    id SERIAL PRIMARY KEY,
+    plan_id INTEGER REFERENCES relocation_plans(id) ON DELETE CASCADE,
+    habitation_id VARCHAR(64) REFERENCES habitations(id),
+    site_id VARCHAR(64) REFERENCES candidate_sites(id),
+    allocated_population INTEGER,
+    distance_km FLOAT,
+    utilization_pct FLOAT,
+    surplus_after INTEGER,
+    status VARCHAR(32) DEFAULT 'assigned'
+        CHECK (status IN ('assigned', 'moved', 'completed', 'cancelled')),
+    assigned_at TIMESTAMPTZ DEFAULT NOW(),
+    moved_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    data_status VARCHAR(32) DEFAULT 'RECOMMENDATION'
+);
+CREATE INDEX IF NOT EXISTS idx_relocation_assignments_plan ON relocation_assignments(plan_id);
+CREATE INDEX IF NOT EXISTS idx_relocation_assignments_habitation ON relocation_assignments(habitation_id);
+
+-- ────────────────────────────────────────────────────────────────────────
+-- Apply schema changes to PostGIS (idempotent). Run once per environment.
+-- ────────────────────────────────────────────────────────────────────────
