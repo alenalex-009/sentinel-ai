@@ -35,10 +35,19 @@ interface MapContainerProps {
    *  popups with the same content. */
   clickPopup?: boolean;
   /** Extra GeoJSON features to draw on top (e.g. road-network routes from
-   *  OSRM/GraphHopper/Valhalla). Lines use cyan; areas are filled amber. */
-  routeFeature?: GeoJSON.Feature | null;
+   *  OSRM/GraphHopper/Valhalla). A single Feature (legacy) or a
+   *  FeatureCollection of ranked route options (recommended + alternatives).
+   *  Lines use cyan; areas are filled amber. */
+  routeFeature?: GeoJSON.Feature | GeoJSON.FeatureCollection | null;
   /** Label for the route legend chip (e.g. "OSRM · 12.4 km · 18 min"). */
   routeLabel?: string | null;
+  /** When provided, clicking a rendered route line reports the option id
+   *  (properties.option_site_id) so the page can focus that option. */
+  onRouteSelect?: (optionSiteId: string) => void;
+  /** Feature ids that should get the recommended (amber) destination emphasis. */
+  recommendedSiteIds?: string[];
+  /** Feature ids that should get the alternative (cyan) destination emphasis. */
+  alternativeSiteIds?: string[];
   /** Active hazard polygons (from /api/v1/hazards/current feature_collection).
    *  Filled by severity_level; hidden behind the same showHazardLayer toggle
    *  as the Bhuvan historical overlay. */
@@ -66,6 +75,9 @@ export function MapContainer({
   clickPopup = true,
   routeFeature = null,
   routeLabel = null,
+  onRouteSelect,
+  recommendedSiteIds,
+  alternativeSiteIds,
   hazardGeoJSON = null,
   safeZonesGeoJSON = null,
   showSafeZonesLayer = false,
@@ -76,6 +88,15 @@ export function MapContainer({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  // Latest-option callbacks/ids for handlers registered once at map load.
+  const onRouteSelectRef = useRef(onRouteSelect);
+  const recommendedIdsRef = useRef(recommendedSiteIds);
+  const alternativeIdsRef = useRef(alternativeSiteIds);
+  useEffect(() => {
+    onRouteSelectRef.current = onRouteSelect;
+    recommendedIdsRef.current = recommendedSiteIds;
+    alternativeIdsRef.current = alternativeSiteIds;
+  });
 
   // Marker geometry source: PostGIS GeoJSON (API) when provided, else the
   // habitation props (seed). Missing display attributes are filled from the
@@ -205,12 +226,38 @@ export function MapContainer({
       // no approximate/decorative boundary layer is rendered.
 
       // --- Route overlay (multi-engine routing, Phase 5C) ---
+      // Two tiers: focused/recommended = bold cyan with casing; alternative
+      // viable routes = thin dashed blue behind it. Features without a
+      // `focused` property (legacy single-route callers) use the bold tier.
       map.addSource("route", { type: "geojson", data: EMPTY_FC });
+      const focusedOrLegacy: maplibregl.ExpressionSpecification = [
+        "any",
+        ["!", ["has", "focused"]],
+        ["==", ["get", "focused"], true],
+      ];
+      const altOnly: maplibregl.ExpressionSpecification = [
+        "all",
+        ["has", "focused"],
+        ["==", ["get", "focused"], false],
+      ];
+      map.addLayer({
+        id: "route-alt-line",
+        type: "line",
+        source: "route",
+        filter: ["all", ["==", ["geometry-type"], "LineString"], altOnly],
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: {
+          "line-color": "#3b82f6",
+          "line-width": 2.4,
+          "line-opacity": 0.65,
+          "line-dasharray": [2.5, 2],
+        },
+      });
       map.addLayer({
         id: "route-casing",
         type: "line",
         source: "route",
-        filter: ["==", ["geometry-type"], "LineString"],
+        filter: ["all", ["==", ["geometry-type"], "LineString"], focusedOrLegacy],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": "#0a0f1a", "line-width": 7, "line-opacity": 0.9 },
       });
@@ -218,14 +265,28 @@ export function MapContainer({
         id: "route-line",
         type: "line",
         source: "route",
-        filter: ["==", ["geometry-type"], "LineString"],
+        filter: ["all", ["==", ["geometry-type"], "LineString"], focusedOrLegacy],
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#00b4d8",
-          "line-width": 4,
+          "line-width": 4.5,
           "line-opacity": 0.95,
         },
       });
+      // Clicking any rendered route focuses that evacuation option.
+      for (const layerId of ["route-line", "route-alt-line"]) {
+        map.on("click", layerId, (e) => {
+          const f = e.features?.[0];
+          const id = f?.properties?.option_site_id as string | undefined;
+          if (id && onRouteSelectRef.current) onRouteSelectRef.current(id);
+        });
+        map.on("mouseenter", layerId, () => {
+          if (onRouteSelectRef.current) map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+        });
+      }
 
       // --- Active hazard polygons (Slice 2: live /api/v1/hazards/current) ---
       map.addSource("hazards", {
@@ -303,14 +364,26 @@ export function MapContainer({
             "#94a3b8",
           ],
           "circle-opacity": 0.25,
-          "circle-stroke-width": 1.6,
+          // Recommended/alternative destinations (evacuation options) get an
+          // emphasis ring over the base green/yellow/red status fill.
+          "circle-stroke-width": [
+            "case",
+            ["==", ["get", "option_recommended"], true], 3.5,
+            ["==", ["get", "option_alternative"], true], 2.6,
+            1.6,
+          ],
           "circle-stroke-color": [
-            "match",
-            ["get", "status"],
-            "green", "#22c55e",
-            "yellow", "#eab308",
-            "red", "#ef4444",
-            "#94a3b8",
+            "case",
+            ["==", ["get", "option_recommended"], true], "#fbbf24",
+            ["==", ["get", "option_alternative"], true], "#00b4d8",
+            [
+              "match",
+              ["get", "status"],
+              "green", "#22c55e",
+              "yellow", "#eab308",
+              "red", "#ef4444",
+              "#94a3b8",
+            ],
           ],
         },
         layout: { visibility: showSafeZonesLayer ? "visible" : "none" },
@@ -534,6 +607,33 @@ export function MapContainer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Data pump: applies `fn` once the map style is fully loaded (sources
+  // exist), retrying briefly if the load event hasn't fired yet. Every
+  // overlay effect uses this so async data can never lose the race against
+  // map.on('load').
+  const useMapData = (fn: (map: maplibregl.Map) => void, deps: unknown[]) => {
+    useEffect(() => {
+      const map = mapRef.current;
+      if (!map) return;
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const run = () => {
+        if (cancelled) return;
+        if (!map.isStyleLoaded() || !map.getSource("route")) {
+          timer = setTimeout(run, 200);
+          return;
+        }
+        fn(map);
+      };
+      run();
+      return () => {
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, deps);
+  };
+
   // Update selected habitation highlight
   useEffect(() => {
     const map = mapRef.current;
@@ -555,7 +655,7 @@ export function MapContainer({
       ]);
 
       const selected = habitations.find((h) => h.id === selectedHabitationId);
-      if (selected) {
+      if (selected && Number.isFinite(selected.longitude) && Number.isFinite(selected.latitude)) {
         map.flyTo({
           center: [selected.longitude, selected.latitude],
           zoom: 13,
@@ -566,47 +666,98 @@ export function MapContainer({
   }, [selectedHabitationId, habitations]);
 
   // Replace marker geometry when a PostGIS GeoJSON payload arrives/updates
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+  useMapData((map) => {
     const source = map.getSource("habitations") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
     source.setData(geojsonData);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [habitationGeoJSON, habitations]);
+  }, [habitationGeoJSON, habitations, geojsonData]);
 
-  // Route overlay: swap geometry when a new route arrives, fit bounds to it.
+  // Route overlay: pump geometry into the map whenever it changes. Retries
+  // on a short interval until the 'route' source exists (the source is added
+  // inside map.on('load'), which can complete after data arrives), then fits
+  // the camera to ALL rendered route lines (or origin + safe zones as
+  // fallback). Never passes non-finite coordinates to fitBounds.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-    const source = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
-    if (!source) return;
+    if (!map) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    if (routeFeature) {
-      source.setData({ type: "FeatureCollection", features: [routeFeature] });
-      const geom = routeFeature.geometry as GeoJSON.LineString;
-      if (geom?.coordinates?.length > 1) {
-        const bounds = geom.coordinates.reduce(
-          (b, c) => [
-            Math.min(b[0], c[0]), Math.min(b[1], c[1]),
-            Math.max(b[2], c[2]), Math.max(b[3], c[3]),
-          ],
-          [Infinity, Infinity, -Infinity, -Infinity] as [number, number, number, number],
-        );
-        map.fitBounds(
-          [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-          { padding: 60, duration: 900, maxZoom: 14 },
-        );
+    const apply = () => {
+      if (cancelled) return;
+      if (!map.isStyleLoaded() || !map.getSource("route")) {
+        timer = setTimeout(apply, 200);
+        return;
       }
-    } else {
-      source.setData(EMPTY_FC);
-    }
-  }, [routeFeature]);
+      const source = map.getSource("route") as maplibregl.GeoJSONSource;
+
+      if (routeFeature) {
+        const rf = routeFeature as GeoJSON.Feature | GeoJSON.FeatureCollection;
+        const feats: GeoJSON.Feature[] = rf.type === "FeatureCollection" ? rf.features : [rf];
+        source.setData({ type: "FeatureCollection", features: feats });
+
+        const lines = feats.flatMap((f) =>
+          f.geometry?.type === "LineString" ? f.geometry.coordinates : [],
+        );
+        const finite = lines.filter(
+          (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]),
+        ) as Array<[number, number]>;
+        let bounds: [number, number, number, number] | null = null;
+        if (finite.length > 1) {
+          bounds = finite.reduce(
+            (b: [number, number, number, number], c: [number, number]) =>
+              [
+                Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+                Math.max(b[2], c[0]), Math.max(b[3], c[1]),
+              ],
+            [Infinity, Infinity, -Infinity, -Infinity] as [number, number, number, number],
+          );
+        } else {
+          // Fallback frame: habitations + safe-zone points.
+          const pts: Array<[number, number]> = [
+            ...habitations
+              .filter((h) => Number.isFinite(h.longitude) && Number.isFinite(h.latitude))
+              .map((h) => [h.longitude, h.latitude] as [number, number]),
+            ...(safeZonesGeoJSON?.features ?? [])
+              .flatMap((f) =>
+                f.geometry?.type === "Point" &&
+                Number.isFinite(f.geometry.coordinates[0]) &&
+                Number.isFinite(f.geometry.coordinates[1])
+                  ? [f.geometry.coordinates as [number, number]]
+                  : [],
+              ),
+          ];
+          if (pts.length > 1) {
+            bounds = pts.reduce(
+              (b: [number, number, number, number], c: [number, number]) =>
+                [
+                  Math.min(b[0], c[0]), Math.min(b[1], c[1]),
+                  Math.max(b[2], c[0]), Math.max(b[3], c[1]),
+                ],
+              [Infinity, Infinity, -Infinity, -Infinity],
+            );
+          }
+        }
+        if (bounds && bounds.every(Number.isFinite)) {
+          map.fitBounds(
+            [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
+            { padding: 60, duration: 900, maxZoom: 14 },
+          );
+        }
+      } else {
+        source.setData(EMPTY_FC);
+      }
+    };
+
+    apply();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [routeFeature, habitations, safeZonesGeoJSON]);
 
   // Replace active hazard geometry when the live event payload arrives/updates
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+  useMapData((map) => {
     const source = map.getSource("hazards") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
     source.setData(hazardGeoJSON ?? EMPTY_FC);
@@ -636,33 +787,43 @@ export function MapContainer({
   }, [showHazardLayer]);
 
   // Safe-zone candidates: swap geometry + toggle visibility when payload/flag
-  // changes (Slice 4).
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+  // changes (Slice 4). Evacuation-option destinations get emphasis flags so
+  // the recommended (amber) / alternative (cyan) rings render.
+  useMapData((map) => {
     const source = map.getSource("safe-zones") as maplibregl.GeoJSONSource | undefined;
     if (!source) return;
-    source.setData(safeZonesGeoJSON ?? EMPTY_FC);
+    const rec = new Set(recommendedSiteIds);
+    const alt = new Set(alternativeSiteIds);
+    const stamped = safeZonesGeoJSON && (rec.size || alt.size)
+      ? {
+          ...safeZonesGeoJSON,
+          features: safeZonesGeoJSON.features.map((f) => ({
+            ...f,
+            properties: {
+              ...f.properties,
+              option_recommended: rec.has(String(f.properties?.id ?? "")),
+              option_alternative: alt.has(String(f.properties?.id ?? "")),
+            },
+          })),
+        }
+      : safeZonesGeoJSON;
+    source.setData(stamped ?? EMPTY_FC);
     const anyFeatures = (safeZonesGeoJSON?.features?.length ?? 0) > 0;
     const visibility = anyFeatures && showSafeZonesLayer ? "visible" : "none";
     if (map.getLayer("safe-zones-ring")) {
       map.setLayoutProperty("safe-zones-ring", "visibility", visibility);
     }
-  }, [safeZonesGeoJSON, showSafeZonesLayer]);
+  }, [safeZonesGeoJSON, showSafeZonesLayer, recommendedSiteIds, alternativeSiteIds]);
 
   // Live OSM layers: swap geometry + visibility when data or toggle changes
   // (Phase 6). Layer ids per category, hidden until the user enables the layer.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-
+  useMapData((map) => {
     const LAYER_IDS: Record<OSMFeatureCategory, string[]> = {
       roads: ["osm-roads-casing", "osm-roads-line"],
       buildings: ["osm-buildings-fill"],
       facilities: ["osm-facilities-dot"],
       water: ["osm-water-fill", "osm-water-outline"],
     };
-
     for (const cat of Object.keys(LAYER_IDS) as OSMFeatureCategory[]) {
       const source = map.getSource(`osm-${cat}`) as maplibregl.GeoJSONSource | undefined;
       if (!source) continue;

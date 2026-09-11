@@ -233,7 +233,10 @@ export function RelocationIntelligence() {
     };
 
   const totalCapacity = candidateSites.reduce((s, site) => s + site.safe_capacity, 0);
-  const capacityGap = totalCapacity - demandTotal;
+  // Honest district gap: a shortage only (max(0, demand - capacity)). When
+  // capacity covers demand, show the surplus — never a negative "gap".
+  const capacityGap = Math.max(0, demandTotal - totalCapacity);
+  const capacitySurplus = Math.max(0, totalCapacity - demandTotal);
 
   // Probe per-engine availability once (drives the selector's status dots).
   const loadEngines = useCallback(async () => {
@@ -338,6 +341,24 @@ export function RelocationIntelligence() {
     ? `${hazardAnalysis.risk_label}${hazardAnalysis.route_risk_score != null ? ` · score ${hazardAnalysis.route_risk_score.toFixed(1)}` : ''}`
     : null;
 
+  // Active hazard GeoJSON (live events) — rendered behind routes.
+  const [hazardGeo, setHazardGeo] = useState<GeoJSON.FeatureCollection | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.getCurrentHazards()
+      .then(h => { if (alive) setHazardGeo((h as { feature_collection?: GeoJSON.FeatureCollection }).feature_collection ?? null); })
+      .catch(() => { if (alive) setHazardGeo(null); });
+    return () => { alive = false; };
+  }, []);
+
+  // Option destination ids for the safe-zone emphasis rings.
+  const recommendedSiteIds = useMemo(
+    () => options?.recommended_route ? [options.recommended_route.site_id] : [],
+    [options?.recommended_route]);
+  const alternativeSiteIds = useMemo(
+    () => (options?.alternative_routes ?? []).map(r => r.site_id),
+    [options?.alternative_routes]);
+
   // ── Live OpenStreetMap feature layers (Phase 6 /api/v1/osm/*) ────────────
   // One shared Munnar pilot bbox; each category fetched lazily when the user
   // toggles the layer on. Results render on the map with OSM attribution.
@@ -416,10 +437,12 @@ export function RelocationIntelligence() {
             trend="stable"
           />
           <OverviewStatCard
-            title="Capacity Gap"
-            value={capacityGap >= 0 ? `+${capacityGap.toLocaleString()}` : capacityGap.toLocaleString()}
+            title={capacityGap > 0 ? 'Capacity Gap' : 'Capacity Surplus'}
+            value={capacityGap > 0
+              ? capacityGap.toLocaleString()
+              : `+${capacitySurplus.toLocaleString()}`}
             icon={<AlertTriangle className="h-4 w-4" />}
-            trend={capacityGap >= 0 ? 'stable' : 'up'}
+            trend={capacityGap > 0 ? 'up' : 'stable'}
           />
           <OverviewStatCard
             title="Sites Available"
@@ -704,14 +727,18 @@ export function RelocationIntelligence() {
           </div>
         </header>
 
-        {/* Map — the centerpiece */}
-        <div className="relative flex-1 min-h-0">
+        {/* Map — the centerpiece (command priority: never below ~45% height) */}
+        <div className="relative flex-[1.6] min-h-[280px]">
           <MapContainer
             habitations={DEMO_HABITATIONS}
             selectedHabitationId={originId}
             showHazardLayer={true}
+            hazardGeoJSON={hazardGeo}
             routeFeature={routeFeature}
             routeLabel={routeLabel}
+            onRouteSelect={setFocusRouteId}
+            recommendedSiteIds={recommendedSiteIds}
+            alternativeSiteIds={alternativeSiteIds}
             clickPopup={false}
             safeZonesGeoJSON={apiSafeZones?.features?.length ? apiSafeZones : null}
             showSafeZonesLayer={safeZonesSource === 'api'}
@@ -747,6 +774,29 @@ export function RelocationIntelligence() {
               {osmStatus}
             </div>
           )}
+          {/* Command-map legend — the visual language of the evacuation picture */}
+          <div aria-label="Map legend" className="absolute bottom-2 right-2 z-10 flex flex-col gap-1 rounded border border-slate-700/70 bg-slate-950/90 px-2.5 py-2 text-2xs text-slate-300">
+            {hazardGeo?.features?.length ? (
+              <span className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60 ring-1 ring-red-500" /> active hazard
+              </span>
+            ) : null}
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 ring-2 ring-white/70" /> affected habitation
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-0.5 w-5 rounded bg-cyan-400" /> recommended route
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-0.5 w-5 rounded border-t-2 border-dashed border-blue-400" /> alternative route
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-amber-400" /> recommended zone
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-cyan-400" /> alternative zone
+            </span>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -767,8 +817,8 @@ export function RelocationIntelligence() {
           ))}
         </div>
 
-        {/* Tab content */}
-        <div className="h-64 flex-shrink-0 overflow-y-auto">
+        {/* Tab content — flexible, scrollable; the map keeps command priority */}
+        <div className="min-h-0 flex-1 max-h-72 flex-shrink-0 overflow-y-auto">
           <div className="p-4">
             {activeTab === 'sites' && (
               <OptionsTab
@@ -798,8 +848,8 @@ export function RelocationIntelligence() {
         </div>
       </main>
 
-      {/* RIGHT PANEL — selected site + actions (wide screens only) */}
-      <aside className="hidden xl:block w-72 flex-shrink-0 overflow-y-auto border-l border-slate-800 bg-slate-900 p-4">
+      {/* RIGHT PANEL — route detail + actions */}
+      <aside className="hidden lg:block w-72 flex-shrink-0 overflow-y-auto border-l border-slate-800 bg-slate-900 p-4">
         {/* Route detail card — the focused (default: recommended) option */}
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide">Route Detail</h2>
