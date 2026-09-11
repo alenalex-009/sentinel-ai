@@ -120,6 +120,7 @@ async def calculate_demand(
             text(
                 """
                 SELECT h.id, h.name, h.population,
+                       ST_Y(h.geom) AS latitude, ST_X(h.geom) AS longitude,
                        r.current_score
                 FROM habitations h
                 JOIN LATERAL (
@@ -162,6 +163,8 @@ async def calculate_demand(
             "habitation_id": row["id"],
             "name": row["name"],
             "population": pop,
+            "latitude": row["latitude"],
+            "longitude": row["longitude"],
             "current_score": score,
             "relocation_demand": demand,
         })
@@ -193,13 +196,12 @@ async def get_safe_zone_sites(
                 """
                 SELECT id, name, source, geom, suitability_score,
                        safety_score, estimated_capacity,
-                       constraint_pass, constraint_evidence,
+                       constraint_pass, constraint_evidence, base_site_id,
                        ST_X(geom) AS lon, ST_Y(geom) AS lat
                 FROM safe_zone_candidates
                 WHERE district_id = :district_id
                   AND constraint_pass = TRUE
-                  AND source = 'discovered'
-                ORDER BY suitability_score DESC
+                ORDER BY (estimated_capacity > 0) DESC, suitability_score DESC
                 """
             ),
             {"district_id": district_id},
@@ -273,25 +275,39 @@ async def create_plan(
 
     # 3. Build SiteInput list with distance from each habitation.
     #    Both paths above yield dicts with lon/lat; normalise defensively.
+    # Real haversine distance from the nearest demanding habitation — the
+    # old placeholder computed distance from (0,0) then clamped to 15 km,
+    # which made the optimizer's distance objective meaningless.
+    from app.services.risk_service import _haversine_km
+
     site_inputs: list[optimizer.SiteInput] = []
     for s in sites:
-        nearest_dist = 999.0
         s_lon = s.get("lon") or s.get("longitude") or 0.0
         s_lat = s.get("lat") or s.get("latitude") or 0.0
+        nearest_dist = None
         for h in hab_list:
-            # rough Euclidean distance for ranking; replaced by PostGIS
-            # real distance below when available
-            d = ((s_lon - 0) ** 2 + (s_lat - 0) ** 2) ** 0.5  # placeholder
-            nearest_dist = min(nearest_dist, d * 111.0)  # deg→km rough
+            h_lat, h_lon = h.get("latitude"), h.get("longitude")
+            if h_lat is None or h_lon is None:
+                continue
+            d = _haversine_km(float(h_lat), float(h_lon), float(s_lat), float(s_lon))
+            if nearest_dist is None or d < nearest_dist:
+                nearest_dist = d
         si = optimizer.SiteInput(
             id=s["id"],
             name=s.get("name") or s["id"],
             c_safe=_nominal_capacity(s),
-            distance_km=min(nearest_dist, 15.0),
+            # Demo-cohort path (no habitation coords): keep the documented
+            # 15 km bound as the labelled worst-acceptable estimate.
+            distance_km=round(nearest_dist, 2) if nearest_dist is not None else 15.0,
             suitability_score=s.get("suitability_score") or 0,
             safety_score=s.get("safety_score") or 0,
-            infrastructure_score=50.0,
-            hard_constraints_passed=True,
+            infrastructure_score=float(s.get("infrastructure_score") or 50.0),
+            # Constraint evidence from the site row — never asserted True.
+            # safe_zone_candidates: constraint_pass; candidate_sites:
+            # hard_constraints_passed.
+            hard_constraints_passed=bool(
+                s.get("constraint_pass", s.get("hard_constraints_passed", True))
+            ),
         )
         site_inputs.append(si)
 

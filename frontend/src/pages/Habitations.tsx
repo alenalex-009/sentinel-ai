@@ -7,18 +7,19 @@ import { FreshnessBadge } from '../components/ui/FreshnessBadge'
 import { ApiStatusBanner } from '../components/ui/ApiStatusBanner'
 import { useApiWithFallback } from '../hooks/useApiWithFallback'
 import { api } from '../api/client'
-import type { HabitationListItem } from '../types'
+import type { HabitationsResponse } from '../types'
 import { DEMO_HABITATIONS } from '../data/idukki-seed'
 
 export function Habitations() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
 
-  const { data: habitations, error, source } = useApiWithFallback<HabitationListItem[]>(
-    () => api.getHabitations('idukki') as Promise<HabitationListItem[]>,
-    DEMO_HABITATIONS,
+  const { data: payload, error, source } = useApiWithFallback<HabitationsResponse>(
+    () => api.getHabitations('idukki') as Promise<HabitationsResponse>,
+    { data_status: 'DEMO', _source: 'demo_fallback', district_id: 'idukki', total: DEMO_HABITATIONS.length, habitations: DEMO_HABITATIONS },
   )
-  const list = habitations ?? DEMO_HABITATIONS
+  // The API returns { data_status, habitations: [...] } — unwrap or fall back.
+  const list = payload?.habitations?.length ? payload.habitations : DEMO_HABITATIONS
 
   const filtered = list.filter(h =>
     h.name.toLowerCase().includes(search.toLowerCase()) ||

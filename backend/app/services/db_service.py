@@ -192,9 +192,16 @@ async def get_candidate_sites(session: AsyncSession, habitation_id: str) -> dict
         data["_source"] = "demo_fallback"
         return data
 
-    # Merge DB rows with demo detail (notes, distance etc.)
+    # DB rows exist, but detailed per-site fields (dimensions, notes,
+    # distance) live only in the demo seed — serve the seed and label it
+    # honestly. Demo content is never labelled postgis-sourced.
     demo = demo_data.get_candidate_sites(habitation_id)
-    demo["_source"] = "postgis"
+    demo["_source"] = "demo_fallback"
+    demo["postgis_rows"] = len(rows)
+    demo["source_note"] = (
+        "Candidate-site rows exist in PostGIS; detailed per-site fields "
+        "are served from the labelled demo seed."
+    )
     return demo
 
 

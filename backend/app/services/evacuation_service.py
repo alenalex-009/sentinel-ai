@@ -164,7 +164,7 @@ async def build_overview(
     if total_demand > 0 and safe_sites:
         opt = run_optimization(
             total_demand, _site_inputs(safe_sites, worst_coords),
-            max_distance_km=50.0, data_status=demand_status,
+            data_status=demand_status,
         )
         unallocated = int(opt.unallocated)
         opt_status = opt.status
@@ -253,13 +253,16 @@ async def build_overview(
         avoidance = route.get("avoidance")
         route_feature = route.get("route_geojson")
 
+    # The engine that actually served, read from the route payload — never
+    # asserted from the policy pick (mirrors reports.py honesty rules).
+    served_by = (route or {}).get("engine") if rec_status == "OK" else None
     recommendation_block = {
         "status": rec_status,
         "reason": rec_reason,
         "route_policy": "ROUTE_ADVANCED (valhalla -> none)",
         "engine": engine,
-        "served_by": engine,
-        "fallback_used": False,
+        "served_by": served_by,
+        "fallback_used": bool(served_by and served_by != "valhalla"),
         "recommended_site": _site_payload(best_site) if best_site else None,
         "route": route_payload,
         "route_feature": route_feature,

@@ -22,7 +22,6 @@ Honesty constraints (same as evacuation_service, Task B2):
 import math
 from dataclasses import asdict
 from datetime import datetime, timezone
-from enum import Enum as _Enum
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -53,17 +52,10 @@ def _now_iso() -> str:
 
 
 def _status_str(value) -> str:
-    """Normalize DataStatus/DataType enum members to their plain string.
-
-    `str()` on a (str, Enum) yields "DataStatus.DEMO" on Python 3.11 —
-    never comparable against section labels. Always use this helper for
-    any status that may originate from demo_data or the services.
-    """
-    if isinstance(value, str) and not isinstance(value, _Enum):
-        return value
-    if isinstance(value, _Enum):
-        return str(value.value)
-    return str(value)
+    """Normalize a data_status that may be a str-Enum (or None) to plain text."""
+    if value is None:
+        return "DEMO"
+    return getattr(value, "value", str(value))
 
 
 def _provenance(source: str, generated_at: str) -> dict:
@@ -77,13 +69,6 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
-
-
-def _status_str(v) -> str:
-    """Normalize a data_status that may be a str-Enum to its plain value."""
-    if v is None:
-        return "DEMO"
-    return getattr(v, "value", str(v))
 
 
 def _overall_status(statuses: list) -> str:

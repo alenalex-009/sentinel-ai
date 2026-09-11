@@ -3,6 +3,7 @@
 
 import type {
   CurrentHazardsResponse,
+  EvacuationOptionsResponse,
   CurrentRiskResponse,
   HazardAwareRouteResponse,
   HistoricalPeriodsResponse,
@@ -173,6 +174,17 @@ export const api = {
     fetchJSON(
       `/api/v1/routing/route/${habitationId}/${siteId}?engine=${engine}`,
     ),
+
+  // Automatic evacuation options (map-driven relocation workflow)
+  getEvacuationOptions: (
+    districtId = 'idukki',
+    habitationId?: string,
+    policy = 'ROUTE_STANDARD',
+  ): Promise<EvacuationOptionsResponse> => {
+    const params = new URLSearchParams({ district_id: districtId, policy })
+    if (habitationId) params.set('habitation_id', habitationId)
+    return fetchJSON(`/api/v1/routing/options?${params}`)
+  },
 
   // Validation (audit trail)
   validateAll: () => fetchJSON('/api/v1/validate/all'),

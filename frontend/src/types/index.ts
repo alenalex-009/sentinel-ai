@@ -854,3 +854,94 @@ export interface MatrixResponse {
   durations_min?: number[][]
   computed_at?: string
 }
+
+export interface HabitationsResponse {
+  data_status: DataStatus
+  _source?: string
+  district_id: string
+  total: number
+  habitations: HabitationListItem[]
+}
+
+// ── Automatic evacuation options (GET /api/v1/routing/options) ────────────
+export interface EvacuationOptionOrigin {
+  id: string
+  name: string
+  latitude?: number
+  longitude?: number
+  relocation_demand?: number
+}
+
+export interface EvacuationOptionDestination {
+  id: string
+  name: string
+  latitude?: number | null
+  longitude?: number | null
+  capacity: number
+  suitability_score?: number | null
+  safety_score?: number | null
+  status?: boolean
+}
+
+export interface EvacuationRouteOption {
+  status: 'OK' | 'UNAVAILABLE' | 'REJECTED' | 'NOT_EVALUATED'
+  site_id: string
+  route_site_id?: string
+  origin?: EvacuationOptionOrigin
+  destination: EvacuationOptionDestination
+  capacity_available: number
+  capacity_sufficient?: boolean
+  distance_km?: number | null
+  duration_min?: number | null
+  eta_min?: number | null
+  risk_score?: number | null
+  risk_label?: string | null
+  hazard_exposure?: {
+    events: Array<string | null>
+    inside_km_total?: number
+    events_evaluated?: number
+  }
+  engine?: string | null
+  served_by?: string | null
+  fallback_used?: boolean
+  engine_requested?: string | null
+  route_geojson?: GeoJSON.Feature | null
+  avoidance?: { enabled: boolean; avoided: boolean; note?: string } | null
+  recommendation_rank?: number
+  recommendation_reason?: string
+  reason?: string | null
+}
+
+export interface EvacuationCapacitySummary {
+  data_status: string
+  origin_demand: number
+  district_total_demand: number
+  total_capacity: number
+  capacity_gap: number
+  capacity_gap_formula: string
+  unallocated_demand: number
+  note: string
+}
+
+export interface EvacuationOptionsResponse {
+  data_status: DataStatus
+  district_id: string
+  habitation_id?: string
+  generated_at: string
+  origin: EvacuationOptionOrigin & { events_near_origin?: Array<string> } | null
+  policy: string
+  engine_policy?: string
+  engine?: string | null
+  engine_unavailable_reason?: string | null
+  hazards?: { data_status: string; active_events: number }
+  recommended_route: EvacuationRouteOption | null
+  alternative_routes: EvacuationRouteOption[]
+  rejected_options: EvacuationRouteOption[]
+  evaluated_sites?: number
+  routed_sites?: number
+  capacity_summary: EvacuationCapacitySummary | null
+  ranking_rule?: string
+  note?: string
+  provenance?: { source: string; generated_at: string }
+  reason?: string
+}

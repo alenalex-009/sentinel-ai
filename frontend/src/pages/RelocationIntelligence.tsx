@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  Award,
   Users,
   AlertTriangle,
   CheckCircle,
@@ -20,7 +21,6 @@ import {
   Zap,
   Route,
   RefreshCw,
-  Gauge,
   Brain,
   Rocket,
   Layers,
@@ -53,6 +53,8 @@ import type {
   OSMFeatureCategory,
   HazardAwareRouteResponse,
   HazardAnalysis,
+  EvacuationOptionsResponse,
+  EvacuationRouteOption,
 } from "../types";
 import clsx from "clsx";
 
@@ -84,6 +86,34 @@ export function RelocationIntelligence() {
   const [routeLoading, setRouteLoading] = useState(false);
   // Hazard-aware scoring + avoidance (Phase 6 /api/v1/routing/hazard-aware).
   const [avoidHazards, setAvoidHazards] = useState(true);
+
+  // ── Automatic evacuation options (map-driven workflow) ──────────────────
+  // The backend evaluates EVERY safe-zone candidate for the origin (default:
+  // the district's highest-demand affected habitation), ranks the routes and
+  // returns recommended_route + alternative_routes[] — no manual site pick
+  // is required to produce a recommendation.
+  const [options, setOptions] = useState<EvacuationOptionsResponse | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [focusRouteId, setFocusRouteId] = useState<string | null>(null);
+  const [originId, setOriginId] = useState<string>('munnar-central');
+
+  const loadOptions = useCallback(async (habId?: string) => {
+    setOptionsLoading(true);
+    setOptionsError(null);
+    try {
+      const r = await api.getEvacuationOptions('idukki', habId) as EvacuationOptionsResponse;
+      setOptions(r);
+      setOriginId(r.habitation_id || r.origin?.id || 'munnar-central');
+      // Focus the recommended route whenever a fresh evaluation lands.
+      setFocusRouteId(r.recommended_route?.site_id ?? null);
+    } catch (err) {
+      setOptions(null);
+      setOptionsError(err instanceof Error ? err.message : 'evacuation options unavailable');
+    } finally {
+      setOptionsLoading(false);
+    }
+  }, []);
 
   // ── Live Slice 5 data (district demand + safe-zone candidates + plan) ──
   const { data: apiDemand, source: demandSource } =
@@ -235,6 +265,9 @@ export function RelocationIntelligence() {
     }
   }, [avoidHazards]);
 
+  // Auto-evaluate every safe zone on mount (no manual selection needed).
+  useEffect(() => { loadOptions(); }, [loadOptions]);
+
   useEffect(() => {
     loadEngines();
     const redZoneService = RedZoneDetectionService.getInstance();
@@ -254,13 +287,49 @@ export function RelocationIntelligence() {
     loadRoute(engine, selectedSite.id);
   }, [engine, selectedSite.id, avoidHazards, loadRoute, routeableSiteIds]);
 
-  // Derive the map overlay + legend label from the current route result.
-  // engineLabel is guarded: GraphHopper-era payloads can lack `engine`.
-  const engineLabel = routeResult?.engine ?? 'graphhopper';
-  const routeFeature = routeResult?.status === 'OK' ? routeResult.route_geojson : null;
-  const routeLabel = routeResult?.status === 'OK' && routeResult.route
-    ? `${engineLabel.toUpperCase()} · ${routeResult.route.distance_km} km · ${routeResult.route.duration_min} min`
+  // ── Ranked route visualization ─────────────────────────────────────────
+  // focusedRoute is the currently inspected option (recommended by default);
+  // alternatives render as secondary lines behind it.
+  const rankedRoutes = useMemo(() => {
+    if (!options) return [] as EvacuationRouteOption[];
+    const viable = [
+      ...(options.recommended_route ? [options.recommended_route] : []),
+      ...(options.alternative_routes ?? []),
+    ];
+    return viable.filter(r => r.route_geojson);
+  }, [options]);
+  const focusedRoute = useMemo(
+    () => rankedRoutes.find(r => r.site_id === focusRouteId) ?? rankedRoutes[0] ?? null,
+    [rankedRoutes, focusRouteId],
+  );
+  const focusedIsRecommended = !!focusedRoute && !!options?.recommended_route
+    && focusedRoute.site_id === options.recommended_route.site_id;
+  const originLabel = options?.origin?.name ?? h.name;
+
+  // Multi-route FeatureCollection: recommended/focused = cyan, others = blue.
+  const multiRouteFeature = useMemo<GeoJSON.FeatureCollection | null>(() => {
+    if (!rankedRoutes.length) return null;
+    const features = rankedRoutes.map(r => ({
+      ...(r.route_geojson as GeoJSON.Feature),
+      properties: {
+        ...(r.route_geojson as GeoJSON.Feature).properties,
+        option_site_id: r.site_id,
+        focused: r.site_id === (focusedRoute?.site_id ?? ''),
+        recommended: r.site_id === options?.recommended_route?.site_id,
+        rank: r.recommendation_rank ?? 99,
+      },
+    }));
+    return { type: 'FeatureCollection', features };
+  }, [rankedRoutes, focusedRoute?.site_id, options?.recommended_route?.site_id]);
+
+  // MapContainer accepts a single Feature — pass the collection through the
+  // routeFeature prop (it is drawn by the same route layers; properties drive
+  // nothing in the map, differentiation happens via the focus overlay below).
+  const routeFeature = multiRouteFeature as unknown as GeoJSON.Feature | null;
+  const routeLabel = focusedRoute
+    ? `${focusedIsRecommended ? '🥇 ' : ''}${focusedRoute.served_by?.toUpperCase() ?? ''} · ${focusedRoute.distance_km} km · ${focusedRoute.eta_min} min · risk ${focusedRoute.risk_label ?? '—'}`
     : null;
+  const engineLabel = focusedRoute?.served_by ?? engine;
   const engineOnline = enginesStatus?.engines?.[engine]?.ok ?? null;
   // Hazard risk badge shown alongside the route when avoidance is on and the
   // backend returned a scored analysis (Phase 6).
@@ -494,6 +563,31 @@ export function RelocationIntelligence() {
           </div>
         </div>
 
+        {/* Origin habitation — the workflow evaluates the highest-demand
+            affected habitation by default; the operator may switch origins. */}
+        <div className="pt-3 border-t border-slate-800/20">
+          <h2 className="text-xs font-semibold tracking-wide uppercase mb-2">Origin Habitation</h2>
+          <select
+            value={originId}
+            onChange={e => { setOriginId(e.target.value); loadOptions(e.target.value); }}
+            className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+            title="Origin for automatic evacuation evaluation"
+          >
+            {(apiDemand?.habitations?.length
+              ? apiDemand.habitations.filter(hh => (hh.relocation_demand ?? 0) > 0)
+              : ([{ habitation_id: 'munnar-central', name: 'Munnar Central', relocation_demand: 0 }] as Array<{ habitation_id: string; name: string; relocation_demand?: number }>)
+            ).map(hh => (
+              <option key={hh.habitation_id} value={hh.habitation_id}>
+                {hh.name} — demand {(hh.relocation_demand ?? 0).toLocaleString()}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-2xs leading-relaxed text-slate-500">
+            Default origin is the highest-demand affected habitation; every safe-zone
+            candidate is evaluated automatically.
+          </p>
+        </div>
+
         {/* Navigation */}
         <div className="pt-3 border-t border-slate-800/20">
           <h2 className="text-xs font-semibold tracking-wide uppercase mb-2">Navigation</h2>
@@ -530,13 +624,46 @@ export function RelocationIntelligence() {
             <div>
               <h1 className="text-sm font-bold tracking-wide">Evacuation Route Planning</h1>
               <p className="text-xs text-slate-400">
-                {h.name} → {selectedSite.name.split(' — ')[1] || selectedSite.name}
+                {originLabel} → {focusedRoute
+                  ? focusedRoute.destination.name.split(' — ')[1] || focusedRoute.destination.name
+                  : selectedSite.name.split(' — ')[1] || selectedSite.name}
               </p>
             </div>
           </div>
           {/* Route provenance chip */}
           <div className="flex items-center gap-2 text-xs">
-            {routeLoading ? (
+            {optionsLoading ? (
+              <span className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-slate-400">
+                <RefreshCw className="h-3 w-3 animate-spin" /> evaluating safe zones…
+              </span>
+            ) : focusedRoute ? (
+              <span
+                className="flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/5 px-2.5 py-1.5"
+                title={(focusedRoute as { reason?: string }).reason ?? focusedRoute.recommendation_reason ?? ''}
+              >
+                {focusedIsRecommended && <Award className="h-3.5 w-3.5 text-amber-400" />}
+                <span className="font-mono font-bold text-cyan-300">
+                  {focusedRoute.distance_km} km
+                </span>
+                <span className="text-slate-500">/</span>
+                <span className="font-mono text-slate-300">
+                  {focusedRoute.eta_min} min
+                </span>
+                <span className="text-2xs uppercase tracking-wider text-slate-500">
+                  via {focusedRoute.served_by?.toUpperCase() ?? '—'}
+                </span>
+                {focusedRoute.fallback_used && (
+                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-2xs uppercase tracking-wider text-amber-300">
+                    fallback · osrm unavailable
+                  </span>
+                )}
+                {focusedRoute.risk_label && (
+                  <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wider text-amber-300">
+                    risk {focusedRoute.risk_label}{focusedRoute.risk_score != null ? ` · ${focusedRoute.risk_score.toFixed(1)}` : ''}
+                  </span>
+                )}
+              </span>
+            ) : routeLoading ? (
               <span className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-slate-400">
                 <RefreshCw className="h-3 w-3 animate-spin" /> routing…
               </span>
@@ -564,11 +691,13 @@ export function RelocationIntelligence() {
             ) : (
               <span
                 className="flex items-center gap-1.5 rounded border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-amber-400"
-                title={routeResult?.reason}
+                title={optionsError ?? options?.reason ?? options?.engine_unavailable_reason ?? routeResult?.reason}
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
                 <span className="text-2xs uppercase tracking-wide">
-                  {engine} unavailable
+                  {options?.engine === null || options?.engine === undefined
+                    ? 'route unavailable'
+                    : `${engine} unavailable`}
                 </span>
               </span>
             )}
@@ -579,8 +708,8 @@ export function RelocationIntelligence() {
         <div className="relative flex-1 min-h-0">
           <MapContainer
             habitations={DEMO_HABITATIONS}
-            selectedHabitationId={null}
-            showHazardLayer={false}
+            selectedHabitationId={originId}
+            showHazardLayer={true}
             routeFeature={routeFeature}
             routeLabel={routeLabel}
             clickPopup={false}
@@ -590,6 +719,15 @@ export function RelocationIntelligence() {
             showOsmLayers={showOsmLayers}
             className="h-full w-full"
           />
+          {/* Origin + evaluation summary chip */}
+          {options && (
+            <div className="absolute left-2 top-10 z-10 max-w-[300px] rounded border border-cyan-500/30 bg-slate-950/85 px-2.5 py-1.5 text-2xs text-slate-300">
+              <span className="font-semibold text-cyan-300">📍 {originLabel}</span>
+              {' · '}{options.evaluated_sites ?? 0} candidates · {options.routed_sites ?? 0} routed
+              {options.hazards ? ` · ${options.hazards.active_events} active hazard(s)` : ''}
+              {optionsLoading && ' · evaluating…'}
+            </div>
+          )}
           {/* OSM layer toggle */}
           <button
             type="button"
@@ -633,14 +771,16 @@ export function RelocationIntelligence() {
         <div className="h-64 flex-shrink-0 overflow-y-auto">
           <div className="p-4">
             {activeTab === 'sites' && (
-              <SitesTab
-                sites={candidateSites}
-                capacities={DEMO_CAPACITY_ASSESSMENTS}
-                selectedSiteId={selectedSite.id}
+              <OptionsTab
+                options={options}
+                loading={optionsLoading}
+                error={optionsError}
+                focusedRouteId={focusedRoute?.site_id ?? null}
+                onFocusRoute={setFocusRouteId}
                 onSelectSite={setSelectedSiteId}
-                activeDistance={routeResult?.status === 'OK' ? routeResult.route?.distance_km ?? null : null}
-                activeDuration={routeResult?.status === 'OK' ? routeResult.route?.duration_min ?? null : null}
-                engineLabel={routeResult?.status === 'OK' ? engineLabel : null}
+                onReevaluate={loadOptions}
+                fallbackSites={candidateSites}
+                demandTotal={demandTotal}
               />
             )}
             {activeTab === 'capacity' && <CapacityTab cap={selectedCap} />}
@@ -660,60 +800,80 @@ export function RelocationIntelligence() {
 
       {/* RIGHT PANEL — selected site + actions (wide screens only) */}
       <aside className="hidden xl:block w-72 flex-shrink-0 overflow-y-auto border-l border-slate-800 bg-slate-900 p-4">
-        {/* Route detail card */}
+        {/* Route detail card — the focused (default: recommended) option */}
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide">Route Detail</h2>
           <div className="rounded-lg border border-slate-800/20 bg-slate-900/30 p-3">
-            {routeResult?.status === 'OK' && routeResult.route ? (
+            {focusedRoute ? (
               <>
                 <div className="mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
-                    {engineLabel === 'osrm' && <Rocket className="h-3.5 w-3.5" />}
-                    {engineLabel === 'valhalla' && <Brain className="h-3.5 w-3.5" />}
-                    {engineLabel === 'graphhopper' && <Gauge className="h-3.5 w-3.5" />}
-                    {engineLabel.toUpperCase()}
+                    {focusedIsRecommended && <Award className="h-3.5 w-3.5 text-amber-400" />}
+                    {focusedIsRecommended ? 'RECOMMENDED' : `RANK ${focusedRoute.recommendation_rank ?? '—'}`}
                   </span>
                   <span className="rounded bg-slate-950/60 px-1.5 py-0.5 text-2xs uppercase tracking-wider text-slate-500">
-                    {routeResult.engine_tier ?? 'balanced'}
+                    {focusedRoute.served_by?.toUpperCase() ?? '—'}
+                    {focusedRoute.fallback_used ? ' (fallback)' : ''}
                   </span>
                 </div>
                 <div className="mb-2 grid grid-cols-2 gap-2">
                   <div className="rounded border border-slate-800 bg-slate-950/40 p-2">
                     <div className="text-2xs text-slate-500">Road distance</div>
                     <div className="text-lg font-bold font-mono text-white">
-                      {routeResult.route.distance_km} <span className="text-2xs text-slate-400">km</span>
+                      {focusedRoute.distance_km} <span className="text-2xs text-slate-400">km</span>
                     </div>
                   </div>
                   <div className="rounded border border-slate-800 bg-slate-950/40 p-2">
-                    <div className="text-2xs text-slate-500">Travel time</div>
+                    <div className="text-2xs text-slate-500">ETA</div>
                     <div className="text-lg font-bold font-mono text-white">
-                      {routeResult.route.duration_min} <span className="text-2xs text-slate-400">min</span>
+                      {focusedRoute.eta_min} <span className="text-2xs text-slate-400">min</span>
                     </div>
                   </div>
                 </div>
-                <p className="text-2xs leading-relaxed text-slate-500">
-                  {routeResult.route.method}. Cache hit:{' '}
-                  {routeResult.route.cache ? 'yes' : 'no'} ·{' '}
-                  {routeResult.route.points_count} geometry points.
-                </p>
-              </>
-            ) : routeResult ? (
-              <>
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-400">
-                  <AlertTriangle className="h-3.5 w-3.5" /> {engineLabel.toUpperCase()} unavailable
+                <div className="mb-2 flex items-center gap-2 text-2xs">
+                  <span className={clsx(
+                    'rounded border px-1.5 py-0.5 font-mono uppercase tracking-wider',
+                    focusedRoute.risk_label === 'LOW' && 'border-green-500/40 bg-green-500/10 text-green-400',
+                    focusedRoute.risk_label === 'MODERATE' && 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+                    (focusedRoute.risk_label === 'HIGH' || focusedRoute.risk_label === 'EXTREME') && 'border-red-500/40 bg-red-500/10 text-red-400',
+                  )}>
+                    risk {focusedRoute.risk_label ?? '—'}{focusedRoute.risk_score != null ? ` · ${focusedRoute.risk_score.toFixed(1)}` : ''}
+                  </span>
+                  <span className="text-slate-500">
+                    hazard events on route: {focusedRoute.hazard_exposure?.events?.length ?? 0}
+                  </span>
+                </div>
+                <div className="mb-2 rounded border border-slate-800 bg-slate-950/40 p-2">
+                  <div className="text-2xs text-slate-500">Destination</div>
+                  <div className="text-xs font-semibold text-white">
+                    {focusedRoute.destination.name}
+                  </div>
+                  <div className="text-2xs text-slate-400">
+                    capacity {(focusedRoute.capacity_available ?? 0).toLocaleString()} · demand{' '}
+                    {(focusedRoute.origin?.relocation_demand ?? options?.capacity_summary?.origin_demand ?? 0).toLocaleString()}
+                  </div>
                 </div>
                 <p className="text-2xs leading-relaxed text-slate-400">
-                  {routeResult.reason}
-                </p>
-                <p className="mt-2 text-2xs leading-relaxed text-slate-500">
-                  No road distance is shown — a straight-line estimate is never
-                  relabelled as a road route. Start the engine (docker compose
-                  up osm-convert osrm-prep osrm-kerala valhalla-kerala) or pick
-                  another engine.
+                  <span className="font-semibold text-slate-300">Why: </span>
+                  {focusedRoute.recommendation_reason}
                 </p>
               </>
+            ) : optionsLoading ? (
+              <p className="text-2xs text-slate-500">Evaluating safe zones…</p>
             ) : (
-              <p className="text-2xs text-slate-500">Select a site to route…</p>
+              <>
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-400">
+                  <AlertTriangle className="h-3.5 w-3.5" /> ROUTE UNAVAILABLE
+                </div>
+                <p className="text-2xs leading-relaxed text-slate-400">
+                  {options?.engine_unavailable_reason ?? options?.reason ?? optionsError ??
+                    'No routing engine answered — no route is fabricated.'}
+                </p>
+                <p className="mt-2 text-2xs leading-relaxed text-slate-500">
+                  Engines: OSRM primary, Valhalla fallback (ROUTE_STANDARD). Start them
+                  with docker compose up osm-convert osrm-prep osrm-kerala valhalla-kerala.
+                </p>
+              </>
             )}
           </div>
         </section>
@@ -843,92 +1003,191 @@ function StatusIndicator({ label, status, details }: { label: string; status: 'a
   );
 }
 
-// Tab: Sites — with live road distance from the selected engine
-function SitesTab({
-  sites,
-  capacities,
-  selectedSiteId,
+// Tab: Ranked evacuation options — the automatic recommendation workflow.
+// Backend evaluated every safe-zone candidate; the recommended route is
+// shown first without any manual site selection. Clicking an option focuses
+// its route on the map; clicking a rejected row explains why it failed.
+function OptionsTab({
+  options,
+  loading,
+  error,
+  focusedRouteId,
+  onFocusRoute,
   onSelectSite,
-  activeDistance,
-  activeDuration,
-  engineLabel,
+  onReevaluate,
+  fallbackSites,
+  demandTotal,
 }: {
-  sites: CandidateSite[];
-  capacities: Record<string, CapacityAssessment>;
-  selectedSiteId: string;
+  options: EvacuationOptionsResponse | null;
+  loading: boolean;
+  error: string | null;
+  focusedRouteId: string | null;
+  onFocusRoute: (id: string) => void;
   onSelectSite: (id: string) => void;
-  activeDistance: number | null;
-  activeDuration: number | null;
-  engineLabel: string | null;
+  onReevaluate: () => void;
+  fallbackSites: CandidateSite[];
+  demandTotal: number;
 }) {
+  const cs = options?.capacity_summary;
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold tracking-wide">Candidate Sites</h2>
-        <p className="text-2xs text-slate-500">
-          {engineLabel && activeDistance !== null
-            ? `Road figures: ${engineLabel.toUpperCase()} (real OSM route)`
-            : 'Distances: DEMO/ESTIMATED seed values (engine unavailable)'}
-        </p>
+        <h2 className="text-sm font-bold tracking-wide">Evacuation Options</h2>
+        <button
+          onClick={onReevaluate}
+          className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-2xs font-semibold text-slate-300 hover:border-cyan-500/50 hover:text-cyan-300"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          re-evaluate
+        </button>
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {sites.map(site => {
-          const cap = capacities[site.id];
-          const selected = site.id === selectedSiteId;
-          const isActive = selected && activeDistance !== null;
-          const cSafe = cap?.c_safe ?? site.safe_capacity;
-          const bottleneck = cap?.bottleneck ?? 'capacity unassessed';
-          const canAbsorb = cap?.can_absorb_alone ?? false;
-          return (
-            <button
-              key={site.id}
-              onClick={() => onSelectSite(site.id)}
-              className={clsx(
-                'w-full rounded-lg border p-3 text-left transition-colors',
-                selected
-                  ? 'border-cyan-500/60 bg-cyan-500/10'
-                  : 'border-slate-800 bg-slate-900/30 hover:border-slate-700'
-              )}
-            >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div>
-                  <div className="text-sm font-semibold text-white">{site.name}</div>
-                  <div className="mt-0.5 text-2xs text-slate-400">
-                    {isActive ? (
-                      <span className="text-cyan-300">
-                        ⤳ {activeDistance} km road · {activeDuration} min ({engineLabel?.toUpperCase()})
-                      </span>
-                    ) : (
-                      <span>Est. {site.distance_km} km{selected ? ' · route unavailable' : ''}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className="text-lg font-bold font-mono text-cyan-400">{site.suitability_score}</span>
-                  <DataTypeBadge type={site.data_type} />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <div className="text-2xs text-slate-400">C_safe</div>
-                  <div className="text-sm font-bold font-mono text-white">{cSafe.toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="text-2xs text-slate-400">Bottleneck</div>
-                  <div className="text-xs font-semibold uppercase text-amber-500">{bottleneck}</div>
-                </div>
-                <div>
-                  {canAbsorb ? (
-                    <span className="flex items-center gap-1 text-2xs text-green-500"><CheckCircle className="h-3 w-3" /> Can absorb</span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-2xs text-amber-500"><XCircle className="h-3 w-3" /> Multi-site</span>
+
+      {loading && (
+        <p className="text-2xs text-slate-400">Evaluating every safe-zone candidate (policy engines + hazard validation)…</p>
+      )}
+      {error && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-2xs text-amber-300">
+          {error} — showing static candidate list. No route is fabricated.
+        </div>
+      )}
+
+      {cs && cs.capacity_gap > 0 && (
+        <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-2xs text-red-300">
+          <AlertTriangle className="mr-1 inline h-3 w-3" />
+          Capacity gap: demand {cs.origin_demand.toLocaleString()} exceeds total capacity{' '}
+          {cs.total_capacity.toLocaleString()} — {cs.capacity_gap.toLocaleString()} unallocated.
+        </div>
+      )}
+
+      {!loading && !options?.recommended_route && !options?.alternative_routes?.length && (
+        <div className="rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-2xs text-amber-400">
+          {options?.reason || options?.engine_unavailable_reason ||
+            'No viable evacuation option yet — engines or safe-zone data unavailable.'}
+        </div>
+      )}
+
+      {(options?.recommended_route || options?.alternative_routes?.length) ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {[options!.recommended_route, ...(options!.alternative_routes ?? [])]
+            .filter((r): r is EvacuationRouteOption => !!r)
+            .map(r => {
+              const isRec = r.recommendation_rank === 1;
+              const focused = r.site_id === focusedRouteId;
+              return (
+                <button
+                  key={r.site_id}
+                  onClick={() => { onFocusRoute(r.site_id); onSelectSite(r.site_id); }}
+                  className={clsx(
+                    'w-full rounded-lg border p-3 text-left transition-colors',
+                    isRec
+                      ? 'border-amber-500/50 bg-amber-500/10'
+                      : focused
+                        ? 'border-cyan-500/60 bg-cyan-500/10'
+                        : 'border-slate-800 bg-slate-900/30 hover:border-slate-700',
                   )}
+                >
+                  <div className="mb-1.5 flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        {isRec && <Award className="h-3.5 w-3.5 text-amber-400" />}
+                        <span className="text-sm font-semibold text-white">
+                          {r.destination.name.split(' — ')[1] || r.destination.name}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 text-2xs text-slate-400">
+                        {r.distance_km} km · {r.eta_min} min · {r.served_by?.toUpperCase() ?? '—'}
+                        {r.fallback_used && <span className="text-amber-400"> (fallback)</span>}
+                      </div>
+                    </div>
+                    <span className={clsx(
+                      'rounded px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wider',
+                      r.risk_label === 'LOW' && 'border border-green-500/40 bg-green-500/10 text-green-400',
+                      r.risk_label === 'MODERATE' && 'border border-amber-500/40 bg-amber-500/10 text-amber-300',
+                      r.risk_label === 'HIGH' && 'border border-orange-500/40 bg-orange-500/10 text-orange-400',
+                      r.risk_label === 'EXTREME' && 'border border-red-500/40 bg-red-500/10 text-red-400',
+                    )}>
+                      {r.risk_label ?? 'RISK —'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <div className="text-2xs text-slate-400">Capacity</div>
+                      <div className="text-sm font-bold font-mono text-white">
+                        {(r.capacity_available ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-2xs text-slate-400">Demand</div>
+                      <div className="text-sm font-bold font-mono text-white">
+                        {(r.origin?.relocation_demand ?? cs?.origin_demand ?? demandTotal).toLocaleString()}
+                      </div>
+                    </div>
+                    <div>
+                      {r.capacity_sufficient ? (
+                        <span className="flex items-center gap-1 text-2xs text-green-500"><CheckCircle className="h-3 w-3" /> sufficient</span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-2xs text-amber-500"><XCircle className="h-3 w-3" /> multi-site</span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-2xs leading-relaxed text-slate-400">
+                    {r.recommendation_reason}
+                  </p>
+                </button>
+              );
+            })}
+        </div>
+      ) : (
+        !loading && (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {fallbackSites.map(site => (
+              <button
+                key={site.id}
+                onClick={() => onSelectSite(site.id)}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-left hover:border-slate-700"
+              >
+                <div className="text-sm font-semibold text-white">{site.name}</div>
+                <div className="text-2xs text-slate-400">
+                  Static candidate (unranked) · est. {site.distance_km} km · capacity {site.safe_capacity.toLocaleString()}
                 </div>
+              </button>
+            ))}
+          </div>
+        )
+      )}
+
+      {options?.rejected_options?.length ? (
+        <div>
+          <h3 className="mb-2 text-2xs font-semibold uppercase tracking-wide text-slate-500">
+            Rejected / unavailable ({options.rejected_options.length})
+          </h3>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {options.rejected_options.slice(0, 12).map(x => (
+              <div
+                key={x.site_id}
+                className={clsx(
+                  'rounded border p-2.5',
+                  x.status === 'REJECTED' ? 'border-red-500/30 bg-red-500/5' : 'border-slate-800 bg-slate-900/30',
+                )}
+                title={x.reason ?? ''}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-2xs font-semibold text-slate-300">
+                    {x.destination?.name?.split(' — ')[1] || x.destination?.name || x.site_id}
+                  </span>
+                  <span className="rounded border border-slate-700 px-1 py-0.5 text-2xs font-mono uppercase tracking-wider text-slate-500">
+                    {x.status}
+                  </span>
+                </div>
+                <p className="mt-1 text-2xs leading-relaxed text-slate-500">{x.reason}</p>
               </div>
-            </button>
-          );
-        })}
-      </div>
+            ))}
+          </div>
+          {options.rejected_options.length > 12 && (
+            <p className="mt-1.5 text-2xs text-slate-600">+ {options.rejected_options.length - 12} more not shown</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
