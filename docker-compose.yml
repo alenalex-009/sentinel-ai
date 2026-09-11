@@ -21,19 +21,16 @@ services:
       retries: 5
 
   # ── Routing (Phase 5, region-aware datasets) ────────────────────────────────
-  # One GraphHopper engine per routing region (graphs are built at import time
-  # and must not be hot-swapped). Each service imports its own OSM extract
-  # (bind-mounted read-only, gitignored) into its own persistent cache volume.
-  # All three services share graphhopper/config.yml: every extract is mounted
-  # at the same in-container path /data/region.osm, and caches are per-service
-  # named volumes, so each engine always imports its own region's dataset.
+  # One GraphHopper engine per routing region.
+  # Each service imports its own OSM extract into its own persistent cache.
+
   graphhopper-kerala:
     build:
       context: ./graphhopper
       dockerfile: Dockerfile
     container_name: sentinel_graphhopper
     ports:
-      - '8989:8989'
+      - '8990:8989'
     volumes:
       - ./osm/kerala.osm:/data/region.osm:ro
       - ./graphhopper/config.yml:/gh/config.yml:ro
@@ -66,11 +63,9 @@ services:
       - ghdata_assam:/data/cache
     restart: unless-stopped
 
-  # ── Multi-engine routing (Phase 5C) ─────────────────────────────────────
-  # OSRM (fast) and Valhalla (advanced) join GraphHopper (balanced) as routing
-  # engines over the SAME OpenStreetMap extract (kerala.osm). The extract is
-  # Overpass XML, so a one-shot osmium job converts it to PBF first; both
-  # engines pre-process from that PBF into their own named volumes.
+  # ── Multi-engine routing ─────────────────────────────────────────────────────
+  # OSRM and Valhalla use the same Kerala OSM extract after conversion to PBF.
+
   osm-convert:
     build:
       context: ./docker/osmium-converter
@@ -85,7 +80,6 @@ services:
     image: ghcr.io/project-osrm/osrm-backend:latest
     container_name: sentinel_osrm_prep
     volumes:
-      # rw: osrm-extract/partition/customize write .osrm.* artifacts beside the PBF
       - osrpbf:/data
     entrypoint: ["/bin/sh", "-c"]
     command: >
@@ -112,8 +106,6 @@ services:
     restart: unless-stopped
 
   valhalla-kerala:
-    # Scripted image: auto-builds tiles from PBF(s) mounted in /custom_files,
-    # then serves on 8002. Rebuilds only when the PBF hash changes.
     image: ghcr.io/valhalla/valhalla-scripted:latest
     container_name: sentinel_valhalla
     ports:
@@ -124,13 +116,14 @@ services:
       use_tiles_ignore_pbf: 'False'
       force_rebuild: 'False'
     volumes:
-      # rw: the scripted image writes valhalla.json, tile tar + hashes here
       - osrpbf:/custom_files
       - valhalla_tiles:/data/valhalla
     depends_on:
       osm-convert:
         condition: service_completed_successfully
     restart: unless-stopped
+
+  # ── Backend ──────────────────────────────────────────────────────────────────
 
   backend:
     build:
@@ -140,19 +133,31 @@ services:
     environment:
       DATABASE_URL: postgresql://sentinel:sentinel_dev@db:5432/sentinel_ai
       DEMO_MODE: 'true'
+
+      # IMPORTANT:
+      # This stays on internal Docker port 8989.
+      # Host port is 8990.
       GRAPHHOPPER_KERALA_URL: http://graphhopper-kerala:8989
+
       GRAPHHOPPER_VIZAG_URL: http://graphhopper-vizag:8989
       GRAPHHOPPER_ASSAM_URL: http://graphhopper-assam:8989
+
       OSRM_KERALA_URL: http://osrm-kerala:5000
       VALHALLA_KERALA_URL: http://valhalla-kerala:8002
+
     ports:
       - '8000:8000'
+
     depends_on:
       db:
         condition: service_healthy
+
     volumes:
       - ./backend:/app
+
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
 
   frontend:
     build:
@@ -161,14 +166,21 @@ services:
     container_name: sentinel_frontend
     environment:
       VITE_API_URL: http://localhost:8000
+
     ports:
       - '5173:5173'
+
     depends_on:
       - backend
+
     volumes:
       - ./frontend:/app
       - /app/node_modules
+
     command: npm run dev -- --host 0.0.0.0
+
+
+# ── Persistent volumes ─────────────────────────────────────────────────────────
 
 volumes:
   pgdata:

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState , useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Users, AlertTriangle, ChevronRight, Radio, Activity } from 'lucide-react'
 import { MapContainer } from '../components/map/MapContainer'
@@ -134,7 +134,18 @@ export function RiskIntelligence() {
     EMPTY_SAFE_ZONES,
     [],
   )
-  const safeZoneFeatures = safeZones as unknown as GeoJSON.FeatureCollection
+  // Only assessed safe zones (real capacity) render on the map — the
+  // unvalidated discovery grid (zero-capacity yellow points) is excluded
+  // from the primary view; it was visual noise, never a viable destination.
+  const safeZoneFeatures = useMemo(() => {
+    const fc = safeZones as unknown as GeoJSON.FeatureCollection | null
+    if (!fc?.features?.length) return fc
+    const viable = fc.features.filter(
+      f => Number(f.properties?.estimated_capacity ?? 0) > 0,
+    )
+    return viable.length ? ({ ...fc, features: viable } as GeoJSON.FeatureCollection) : fc
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safeZones])
 
   // Dynamic current risk (Slice 3) — live escalation fed by weather/events.
   const { data: currentRisk } = useApiWithFallback<CurrentRiskResponse>(

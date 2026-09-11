@@ -351,13 +351,26 @@ export function RelocationIntelligence() {
     return () => { alive = false; };
   }, []);
 
-  // Option destination ids for the safe-zone emphasis rings.
+  // Option destination ids: recommended + alternatives. These are the only
+  // safe-zone features drawn on the primary map — the unvalidated discovery
+  // grid (81 zero-capacity points) stays in the Rejected section with its
+  // real reasons, never on the command map.
   const recommendedSiteIds = useMemo(
     () => options?.recommended_route ? [options.recommended_route.site_id] : [],
     [options?.recommended_route]);
   const alternativeSiteIds = useMemo(
     () => (options?.alternative_routes ?? []).map(r => r.site_id),
     [options?.alternative_routes]);
+  const viableZoneIds = useMemo(
+    () => new Set([...recommendedSiteIds, ...alternativeSiteIds]),
+    [recommendedSiteIds, alternativeSiteIds]);
+  const viableZonesGeoJSON = useMemo<GeoJSON.FeatureCollection | null>(() => {
+    if (!apiSafeZones?.features?.length) return null;
+    const viable = apiSafeZones.features.filter(
+      f => viableZoneIds.has(String(f.properties?.id ?? '')),
+    );
+    return viable.length ? { ...apiSafeZones, features: viable } : null;
+  }, [apiSafeZones, viableZoneIds]);
 
   // ── Live OpenStreetMap feature layers (Phase 6 /api/v1/osm/*) ────────────
   // One shared Munnar pilot bbox; each category fetched lazily when the user
@@ -740,8 +753,8 @@ export function RelocationIntelligence() {
             recommendedSiteIds={recommendedSiteIds}
             alternativeSiteIds={alternativeSiteIds}
             clickPopup={false}
-            safeZonesGeoJSON={apiSafeZones?.features?.length ? apiSafeZones : null}
-            showSafeZonesLayer={safeZonesSource === 'api'}
+            safeZonesGeoJSON={viableZonesGeoJSON}
+            showSafeZonesLayer={!!viableZonesGeoJSON}
             osmLayers={osmLayers}
             showOsmLayers={showOsmLayers}
             className="h-full w-full"
@@ -776,25 +789,23 @@ export function RelocationIntelligence() {
           )}
           {/* Command-map legend — the visual language of the evacuation picture */}
           <div aria-label="Map legend" className="absolute bottom-2 right-2 z-10 flex flex-col gap-1 rounded border border-slate-700/70 bg-slate-950/90 px-2.5 py-2 text-2xs text-slate-300">
-            {hazardGeo?.features?.length ? (
-              <span className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60 ring-1 ring-red-500" /> active hazard
-              </span>
-            ) : null}
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-red-500/50 ring-1 ring-red-500/60" /> hazard zone
+            </span>
             <span className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-cyan-400 ring-2 ring-white/70" /> affected habitation
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-amber-400" /> recommended safe zone
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-cyan-400" /> alternative safe zone
             </span>
             <span className="flex items-center gap-2">
               <span className="h-0.5 w-5 rounded bg-cyan-400" /> recommended route
             </span>
             <span className="flex items-center gap-2">
               <span className="h-0.5 w-5 rounded border-t-2 border-dashed border-blue-400" /> alternative route
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-amber-400" /> recommended zone
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-cyan-400" /> alternative zone
             </span>
           </div>
         </div>
@@ -1207,10 +1218,10 @@ function OptionsTab({
       )}
 
       {options?.rejected_options?.length ? (
-        <div>
-          <h3 className="mb-2 text-2xs font-semibold uppercase tracking-wide text-slate-500">
-            Rejected / unavailable ({options.rejected_options.length})
-          </h3>
+        <details className="group">
+          <summary className="mb-2 cursor-pointer list-none text-2xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-300">
+            Rejected / Discovery Options ({options.rejected_options.length}) ▾
+          </summary>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {options.rejected_options.slice(0, 12).map(x => (
               <div
@@ -1236,7 +1247,7 @@ function OptionsTab({
           {options.rejected_options.length > 12 && (
             <p className="mt-1.5 text-2xs text-slate-600">+ {options.rejected_options.length - 12} more not shown</p>
           )}
-        </div>
+        </details>
       ) : null}
     </div>
   );

@@ -158,22 +158,22 @@ export function MapContainer({
     const map = new maplibregl.Map({
       container: containerRef.current,
 
-      // OpenStreetMap — free raster basemap
+      // OpenStreetMap — the official raster tile server (keyless).
       style: {
         version: 8,
-        // CARTO Dark Matter — keyless (no API key required) basemap,
-        // per instructions.md §3. OpenStreetMap was the previous
-        // choice; CARTO is now the canonical keyless source.
+        // Real OSM standard tiles. NOT the wiki/editing API (that serves raw
+        // geodata, not map tiles) and NOT a keyed third-party provider —
+        // tile.openstreetmap.org is the canonical map source.
         glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
         sources: {
           osm: {
             type: "raster",
             tiles: [
-              "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+              "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
             ],
             tileSize: 256,
             attribution:
-              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxzoom: 19,
           },
         },
@@ -308,7 +308,7 @@ export function MapContainer({
             "LOW", "#3b82f6",
             "#94a3b8",
           ],
-          "fill-opacity": 0.22,
+          "fill-opacity": 0.16,
         },
         layout: { visibility: showHazardLayer ? "visible" : "none" },
       });
@@ -327,8 +327,8 @@ export function MapContainer({
             "LOW", "#3b82f6",
             "#94a3b8",
           ],
-          "line-width": 1.5,
-          "line-opacity": 0.8,
+          "line-width": 1.8,
+          "line-opacity": 0.4,
         },
         layout: { visibility: showHazardLayer ? "visible" : "none" },
       });
@@ -345,15 +345,10 @@ export function MapContainer({
         filter: ["==", ["geometry-type"], "Point"],
         paint: {
           "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            7,
-            12,
-            11,
-            14,
-            15,
+            "case",
+            ["==", ["get", "option_recommended"], true],
+            ["interpolate", ["linear"], ["zoom"], 8, 10, 12, 15, 14, 20],
+            ["interpolate", ["linear"], ["zoom"], 8, 7, 12, 11, 14, 15],
           ],
           "circle-color": [
             "match",
@@ -519,9 +514,9 @@ export function MapContainer({
           "text-anchor": "top",
         },
         paint: {
-          "text-color": "#cbd5e1",
-          "text-halo-color": "#0a0f1a",
-          "text-halo-width": 1.5,
+          "text-color": "#1e293b",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 2,
         },
       });
 
@@ -850,11 +845,7 @@ export function MapContainer({
       {showSafeZonesLayer && (safeZonesGeoJSON?.features?.length ?? 0) > 0 && (
         <div className="absolute right-2 top-10 flex items-center gap-2 rounded border border-emerald-500/40 bg-slate-950/90 px-2 py-1 text-2xs text-slate-300">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          optional
-          <span className="h-2 w-2 rounded-full bg-yellow-500" />
-          caution
-          <span className="h-2 w-2 rounded-full bg-red-500" />
-          excluded
+          safe zone
         </div>
       )}
       {/* OSM feature legend chip */}
@@ -877,7 +868,7 @@ export function MapContainer({
       {/* Map attribution overlay */}
       <div className="absolute bottom-6 left-2 flex flex-col gap-1">
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-slate-600">
-          Basemap: CARTO Dark Matter (OpenStreetMap data)
+          Basemap: © OpenStreetMap contributors
         </span>
         <span className="rounded bg-slate-950/80 px-1.5 py-0.5 text-2xs text-amber-600">
           {pointsSourceLabel}
